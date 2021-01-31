@@ -1,6 +1,6 @@
 import array, time
 from machine import Pin
-import rp2
+from rp2 import PIO, StateMachine, asm_pio
 
 
 @asm_pio(sideset_init=PIO.OUT_LOW)
@@ -13,7 +13,7 @@ def asm_prog():
     #
     # TODO: This needs to also include the statemachine ID, but I don't know how
     # to get it dynamically inside this function :/
-    wait(1,irq,0x10|1)
+    wait(1, irq, rel(1))
     
     label("start")
     # Pull reps into OSR (blocking)
@@ -99,4 +99,23 @@ def asm_prog():
     label("stop")
     # wrap to beginning and block on IRQ
     wrap()
+
+class Pseudoclock(object):
+    def __init__(self, index, base_freq, pin):
+        self.sm = StateMachine(index, asm_prog, freq=base_freq, sideset_base=Pin(pin))
+
+
+# Create serial connection that lives in main thread
+#   On receive data, load into RAM, tell pseudoclock to prebuffer
+#   On receive start, trigger statemachine via IRQ
+#   On receive info from pseudoclock, send to PC over serial
+
+# Create Pseudoclock state machine in separate thread
+#   Create state machine and start (it will wait for IRQ trigger)
+#   On prebuffer, load words from RAM into FIFO using put(). Do this continually until buffer empty
+#       TODO: How to interrupt that buffering? For example, using abort?
+#             May also want to continuously read input buffer to determine wait status?
+#             I wonder how thread safe the state machine is? Could some of this be done from serial thread?
+#   On stop (triggered by IRQ), read FIFO using get() to get length of waits (up to 4 max)
+#       Tell serial port this information (after calculating wait lengths in clock cycles)
 
