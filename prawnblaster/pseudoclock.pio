@@ -1,0 +1,138 @@
+
+;#######################################################################
+;#                                                                     #
+;# pseudoclock.pio                                                     #
+;#                                                                     #
+;# Copyright 2021, Philip Starkey                                      #
+;#                                                                     #
+;#                                                                     #
+;# This file is used to flash a Raspberry Pi Pico microcontroller      #
+;# prototyping board to create a PrawnBlaster (see readme.txt and      #
+;# http://hardware.labscriptsuite.org).                                #
+;# This file is licensed under the Simplified BSD License.             #
+;# See the license.txt file for the full license.                      #
+;#                                                                     #
+;#######################################################################
+
+
+
+.program pseudoclock
+.side_set 1 opt
+.wrap_target
+
+; TODO: IRQ wait
+
+start:
+    ; Pull reps into OSR (blocking)
+    pull
+
+    ;
+    ; Start program and go high
+    ;
+    mov y, osr                          ; Move reps into Y
+    jmp !y waitstart                    ; If reps is 0 for the first instruction, jump to wait/end block. This should maybe be updated to
+                                        ; jump to initialstart instead if we can fit that block of code in...
+    jmp y-- shortstart side 1           ; go high, and decrement y (since it only decrements post jump check). This will always jump
+                                        ; since we just checked if it was 0 in the previous jump.
+
+;initialstart:                           ; This commented out block is how we might indefinitely wait for initial trigger
+;    wait 1 0                            ; but I need to check carefully if it works and also if it fits in the 32 instructions
+;    jmp y-- shortstart side 1           ; we have. So It's commented out for now....Also need to work out if pin number is correct!
+
+; This allows us to skip the above mov/wait check if we already did it as part of "newinst" below
+shortstart:
+    nop                     [1]         ; Some nops to balance out the paths and also ensure the FIFO has loaded data
+    ;nop
+    
+    pull                                ; pull half period into OSR
+; This label skips loading in a new half period when we are just doing another rep of the previous half period
+mainloop:
+    mov x, osr                          ; (Re)load half period into X 
+highloop:
+    jmp x-- highloop                    ; Decrement half period and jump if not 0. This loops for X clock cycles
+
+    ;
+    ; Reload half period into X and drop to low
+    ;
+    mov x, osr      side 0
+lowloop:
+    
+    jmp x-- lowloop                     ; Decrement half period and jump if not 0. This loops for X clock cycles
+    
+    jmp y-- continuereps                ; Decrement reps now since we have the space, and jump to normal path if there are still more reps to do
+                                        ; If we are out of reps, do the unusual path for a new instruction
+newinst:
+    pull                                ; Pull next reps into OSR
+    mov y, osr                          ; and transfer to Y
+    jmp !y waitstart                    ; If reps is 0, jump to wait/end block
+    jmp y-- shortstart  side 1          ; else go high, decrement y (since it only decrements post jump check so we need to subtract 1 off the
+                                        ; reps count, but only after the waitstart jump check ) and jump to shortstart
+
+;
+; Normal path when we still have more reps to do
+;
+continuereps:
+    nop                     [2]         ; nop[2] means a nop + 2 delay cycles == 3 nops
+    ;nop
+    ;nop
+   
+    nop             side 1  [2]         ; Go high and jump to point where we reload the half period (after padding out the path length to match the
+    ;nop                                ; length of the other path that also has to load the reps and check for a wait
+    ;nop
+    jmp mainloop
+
+;
+; Wait code (reps already loaded in Y and == 0)
+;
+waitstart:
+    pull                                ; Load in half period
+    mov x, osr                          ; and place in X
+    
+    jmp !x stop                         ; if half period is also 0, then stop
+                                        ; otherwise go to the wait loop (half period contains number loops to wait)
+waitloop:                       
+    jmp pin waitdone                    ; Check if input trigger is high and jump if true
+    jmp x-- waitloop                    ; decrement wait loop counter "x" and continue looping if not 0
+
+waitdone:
+    mov isr, x                          ; put X (the remaining number of wait loop cycles) in ISR as a measure of how long the wait was
+    
+    
+
+    push noblock                        ; send count to main program as length of wait (0 implies timeout)
+                                        ; The length of the wait is determined by the original timeout sent, minus
+                                        ; the value returned here, all times 2 times the clock cycle length
+    
+    jmp start                           ; jump to start to resume
+
+
+; Stop code
+stop:
+    mov isr, x                           ; push something to the FIFO so we know we are done
+    push block                           ; Since this is not time critical, we can block here getting us an extra wait length stored in the FIFO
+    .wrap                                ; wrap to beginning and block on IRQ
+
+
+% c-sdk {
+#include "hardware/gpio.h"
+static inline void pio_pseudoclock_init(PIO pio, uint sm, uint offset, uint out_pin, uint in_pin) {
+    pio_sm_config c = pseudoclock_program_get_default_config(offset);
+
+    // Configure pseudoclock output pin and set as the sideset pin
+    pio_sm_set_consecutive_pindirs(pio, sm, out_pin, 1, true);
+    pio_gpio_init(pio, out_pin);
+    sm_config_set_sideset_pins(&c, out_pin);
+
+    // Configure wait trigger resume pin and set as the jmp pin
+    pio_sm_set_consecutive_pindirs(pio, sm, in_pin, 1, false);
+    pio_gpio_init(pio, in_pin);
+    sm_config_set_jmp_pin(&c, in_pin); 
+
+    // TODO: Configure clock frequency
+
+    // Configure PIO state machine
+    pio_sm_init(pio, sm, offset, &c);
+    pio_sm_set_enabled(pio, sm, true);
+
+}
+%}
