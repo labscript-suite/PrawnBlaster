@@ -49,11 +49,9 @@ int status;
 
 void core1_entry()
 {
-    // Configure PIO Statemachine
+    // PIO initialisation
     pio = pio0;
     uint offset = pio_add_program(pio, &pseudoclock_program);
-    sm = pio_claim_unused_sm(pio, true);
-    pio_pseudoclock_init(pio, sm, offset, OUT_PIN, IN_PIN);
 
     // announce we are ready
     multicore_fifo_push_blocking(0);
@@ -62,6 +60,10 @@ void core1_entry()
     {
         // wait for message from main core
         multicore_fifo_pop_blocking();
+
+        // Configure PIO Statemachine
+        sm = pio_claim_unused_sm(pio, true);
+        pio_pseudoclock_init(pio, sm, offset, OUT_PIN, IN_PIN);
 
         // Find the number of instructions to send
         int instructions_to_send = 0;
@@ -93,6 +95,9 @@ void core1_entry()
         pio_sm_get_blocking(pio, sm);
 
         printf("Pseudoclock program complete\n");
+
+        // release the state machine
+        pio_sm_unclaim(pio, sm);
 
         // Tell main core we are done
         multicore_fifo_push_blocking(1);
@@ -141,10 +146,28 @@ void readline()
     }
 }
 
+void configure_gpio()
+{
+    // initialise output pin. Needs to be done after state machine has run
+    gpio_init(OUT_PIN);
+    gpio_set_dir(OUT_PIN, GPIO_OUT);
+}
+
+void check_status()
+{
+    if (multicore_fifo_rvalid()) {
+        multicore_fifo_pop_blocking();
+        status = STOPPED;
+    }
+}
+
 void loop()
 {
     // fgets(readstring, 255, stdin);
     readline();
+
+    // Check if the state machine has sent us new info
+    check_status();
 
     if (strncmp(readstring, "hello", 5) == 0)
     {
@@ -152,16 +175,18 @@ void loop()
     }
     else if (strncmp(readstring, "status", 6) == 0)
     {
-        if (multicore_fifo_rvalid()) {
-            multicore_fifo_pop_blocking();
-            status = STOPPED;
-        }
         printf("%d\n", status);
-
+    }
+    // Prevent manual mode commands from running during buffered execution
+    else if (status == RUNNING) {
+        printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0.\n", readstring);
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
     {
         autostart = 0;
+        // Force output low in case it was left high
+        gpio_put(OUT_PIN, 0);
+        // Notify state machine to start
         multicore_fifo_push_blocking(0);
         // update status
         status = RUNNING;
@@ -169,6 +194,9 @@ void loop()
     else if ((strncmp(readstring, "start", 5) == 0)) // || (strcmp(readstring, "") == 0))
     {
         autostart = 1;
+        // Force output low in case it was left high
+        gpio_put(OUT_PIN, 0);
+        // Notify state machine to start
         multicore_fifo_push_blocking(0);
         // update status
         status = RUNNING;
@@ -250,19 +278,16 @@ void loop()
     }
     else if (strncmp(readstring, "go high", 7) == 0)
     {
+        configure_gpio();
         gpio_put(OUT_PIN, 1);
         printf("ok\n");
     }
     else if (strncmp(readstring, "go low", 6) == 0)
     {
+        configure_gpio();
         gpio_put(OUT_PIN, 0);
         printf("ok\n");
     }
-    // else if (strncmp(readstring, "reset", 5) == 0)
-    // {
-    //     printf("ok\n");
-    //     //asm volatile("j reset\n\t");
-    // }
     else
     {
         printf("invalid request: %s\n", readstring);
@@ -277,10 +302,6 @@ int main()
 
     multicore_launch_core1(core1_entry);
     multicore_fifo_pop_blocking();
-
-    // initialise output pin
-    //gpio_init(OUT_PIN);
-    //gpio_set_dir(OUT_PIN, GPIO_OUT);
 
     while (true)
     {
