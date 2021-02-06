@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include "pico/stdlib.h"
+#include "pico/multicore.h"
 #include "hardware/pio.h"
 #include "pseudoclock.pio.h"
 
@@ -41,38 +42,62 @@ const uint IN_PIN = 0;
 PIO pio;
 uint sm;
 
-void start()
-{
-    // Find the number of instructions to send
-    int instructions_to_send = 0;
-    int wait_count = 0;
-    int waits[4];
-    for (int i = 0; i < (max_instructions * 2 + 2); i += 2)
-    {
-        if (instructions[i] == 0 && instructions[i + 1] == 0)
-        {
-            instructions_to_send = i + 2;
-            break;
-        }
-        else if (instructions[i] == 0)
-        {
-            wait_count += 1;
-        }
-    }
-    printf("Will send %d instructions\n", instructions_to_send);
-    for (int i = 0; i < instructions_to_send; i++)
-    {
-        pio_sm_put_blocking(pio, sm, instructions[i]);
-    }
-    // Now read the correct number of waits from the buffer
-    for (int i = 0; i < wait_count; i++)
-    {
-        waits[i] = pio_sm_get_blocking(pio, sm);
-    }
-    // Get completed message
-    pio_sm_get_blocking(pio, sm);
+// STATUS flag
+int status;
+#define STOPPED 0
+#define RUNNING 1
 
-    printf("Pseudoclock program complete\n");
+void core1_entry()
+{
+    // Configure PIO Statemachine
+    pio = pio0;
+    uint offset = pio_add_program(pio, &pseudoclock_program);
+    sm = pio_claim_unused_sm(pio, true);
+    pio_pseudoclock_init(pio, sm, offset, OUT_PIN, IN_PIN);
+
+    // announce we are ready
+    multicore_fifo_push_blocking(0);
+
+    while (true)
+    {
+        // wait for message from main core
+        multicore_fifo_pop_blocking();
+
+        // Find the number of instructions to send
+        int instructions_to_send = 0;
+        int wait_count = 0;
+        int waits[4];
+        for (int i = 0; i < (max_instructions * 2 + 2); i += 2)
+        {
+            if (instructions[i] == 0 && instructions[i + 1] == 0)
+            {
+                instructions_to_send = i + 2;
+                break;
+            }
+            else if (instructions[i] == 0)
+            {
+                wait_count += 1;
+            }
+        }
+        printf("Will send %d instructions\n", instructions_to_send);
+        for (int i = 0; i < instructions_to_send; i++)
+        {
+            pio_sm_put_blocking(pio, sm, instructions[i]);
+        }
+        // Now read the correct number of waits from the buffer
+        for (int i = 0; i < wait_count; i++)
+        {
+            waits[i] = pio_sm_get_blocking(pio, sm);
+        }
+        // Get completed message
+        pio_sm_get_blocking(pio, sm);
+
+        printf("Pseudoclock program complete\n");
+
+        // Tell main core we are done
+        multicore_fifo_push_blocking(1);
+        printf("Core1 loop ended\n");
+    }
 }
 
 void readline()
@@ -125,15 +150,28 @@ void loop()
     {
         printf("hello\n");
     }
+    else if (strncmp(readstring, "status", 6) == 0)
+    {
+        if (multicore_fifo_rvalid()) {
+            multicore_fifo_pop_blocking();
+            status = STOPPED;
+        }
+        printf("%d\n", status);
+
+    }
     else if (strncmp(readstring, "hwstart", 7) == 0)
     {
         autostart = 0;
-        start();
+        multicore_fifo_push_blocking(0);
+        // update status
+        status = RUNNING;
     }
     else if ((strncmp(readstring, "start", 5) == 0)) // || (strcmp(readstring, "") == 0))
     {
         autostart = 1;
-        start();
+        multicore_fifo_push_blocking(0);
+        // update status
+        status = RUNNING;
     }
     else if (strncmp(readstring, "set ", 4) == 0)
     {
@@ -237,19 +275,12 @@ int main()
 {
     stdio_init_all();
 
-    // initialise output pin
-    gpio_init(OUT_PIN);
-    gpio_set_dir(OUT_PIN, GPIO_OUT);
+    multicore_launch_core1(core1_entry);
+    multicore_fifo_pop_blocking();
 
-    // Configure PIO Statemachine
-    pio = pio0;
-    printf("1\n");
-    uint offset = pio_add_program(pio, &pseudoclock_program);
-    printf("2\n");
-    sm = pio_claim_unused_sm(pio, true);
-    printf("3\n");
-    pio_pseudoclock_init(pio, sm, offset, OUT_PIN, IN_PIN);
-    printf("4\n");
+    // initialise output pin
+    //gpio_init(OUT_PIN);
+    //gpio_set_dir(OUT_PIN, GPIO_OUT);
 
     while (true)
     {

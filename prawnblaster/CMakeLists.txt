@@ -6,7 +6,7 @@ pico_generate_pio_header(prawnblaster ${CMAKE_CURRENT_LIST_DIR}/pseudoclock.pio)
 
 
 # Pull in our pico_stdlib which aggregates commonly used features
-target_link_libraries(prawnblaster pico_stdlib hardware_pio)
+target_link_libraries(prawnblaster pico_stdlib hardware_pio pico_multicore)
 
 # enable usb output, disable uart output
 pico_enable_stdio_usb(prawnblaster 1)
