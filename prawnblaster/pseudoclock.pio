@@ -30,14 +30,14 @@ start:
     ; Start program and go high
     ;
     mov y, osr                          ; Move reps into Y
-    jmp !y waitstart                    ; If reps is 0 for the first instruction, jump to wait/end block. This should maybe be updated to
+    jmp !y initialstart                 ; If reps is 0 for the first instruction, jump to wait/end block. This should maybe be updated to
                                         ; jump to initialstart instead if we can fit that block of code in...
     jmp y-- shortstart side 1           ; go high, and decrement y (since it only decrements post jump check). This will always jump
                                         ; since we just checked if it was 0 in the previous jump.
 
-;initialstart:                           ; This commented out block is how we might indefinitely wait for initial trigger
-;    wait 1 0                            ; but I need to check carefully if it works and also if it fits in the 32 instructions
-;    jmp y-- shortstart side 1           ; we have. So It's commented out for now....Also need to work out if pin number is correct!
+initialstart:
+    wait 1 pin 0                        ; indefinitely wait for initial trigger (usually skipped by above jump)
+    jmp start                           ; Must load in new value for reps and load in half period
 
 ; This allows us to skip the above mov/wait check if we already did it as part of "newinst" below
 shortstart:

@@ -32,7 +32,6 @@ const unsigned int max_instructions = 30000;
 unsigned int instructions[60002];
 
 char readstring[256] = "";
-int autostart;
 // This contains the number of clock cycles for a half period, which is currently 6 (there are 6 ASM instructions)
 const unsigned int non_loop_path_length = 6;
 
@@ -59,7 +58,7 @@ void core1_entry()
     while (true)
     {
         // wait for message from main core
-        multicore_fifo_pop_blocking();
+        uint32_t hwstart = multicore_fifo_pop_blocking();
 
         // Configure PIO Statemachine
         sm = pio_claim_unused_sm(pio, true);
@@ -82,6 +81,12 @@ void core1_entry()
             }
         }
         printf("Will send %d instructions\n", instructions_to_send);
+
+        if (hwstart) {
+            // send initial wait command
+            pio_sm_put_blocking(pio, sm, 0);
+        }
+
         for (int i = 0; i < instructions_to_send; i++)
         {
             pio_sm_put_blocking(pio, sm, instructions[i]);
@@ -169,6 +174,9 @@ void loop()
     // Check if the state machine has sent us new info
     check_status();
 
+    // TODO:
+    //      Add in reset command
+    //      Add in command to read out waits
     if (strncmp(readstring, "hello", 5) == 0)
     {
         printf("hello\n");
@@ -183,17 +191,15 @@ void loop()
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
     {
-        autostart = 0;
         // Force output low in case it was left high
         gpio_put(OUT_PIN, 0);
         // Notify state machine to start
-        multicore_fifo_push_blocking(0);
+        multicore_fifo_push_blocking(1);
         // update status
         status = RUNNING;
     }
     else if ((strncmp(readstring, "start", 5) == 0)) // || (strcmp(readstring, "") == 0))
     {
-        autostart = 1;
         // Force output low in case it was left high
         gpio_put(OUT_PIN, 0);
         // Notify state machine to start
