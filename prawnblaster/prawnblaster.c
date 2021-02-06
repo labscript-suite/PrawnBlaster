@@ -26,10 +26,13 @@
 #include "hardware/pio.h"
 #include "pseudoclock.pio.h"
 
+#define DEBUG 1
+
 // Can't seem to have this be used to define array size even though it's a constant
 const unsigned int max_instructions = 30000;
 // max_instructions*2 + 2
 unsigned int instructions[60002];
+unsigned int waits[4];
 
 char readstring[256] = "";
 // This contains the number of clock cycles for a half period, which is currently 6 (there are 6 ASM instructions)
@@ -45,6 +48,8 @@ uint sm;
 int status;
 #define STOPPED 0
 #define RUNNING 1
+#define ABORTING 2
+#define ABORTED 3
 
 void core1_entry()
 {
@@ -67,7 +72,6 @@ void core1_entry()
         // Find the number of instructions to send
         int instructions_to_send = 0;
         int wait_count = 0;
-        int waits[4];
         for (int i = 0; i < (max_instructions * 2 + 2); i += 2)
         {
             if (instructions[i] == 0 && instructions[i + 1] == 0)
@@ -80,33 +84,92 @@ void core1_entry()
                 wait_count += 1;
             }
         }
-        printf("Will send %d instructions\n", instructions_to_send);
+        if (DEBUG)
+        {
+            printf("Will send %d instructions\n", instructions_to_send);
+        }
 
-        if (hwstart) {
+        if (hwstart)
+        {
             // send initial wait command
             pio_sm_put_blocking(pio, sm, 0);
         }
 
+        // send instructions
         for (int i = 0; i < instructions_to_send; i++)
         {
             pio_sm_put_blocking(pio, sm, instructions[i]);
         }
+
         // Now read the correct number of waits from the buffer
         for (int i = 0; i < wait_count; i++)
         {
-            waits[i] = pio_sm_get_blocking(pio, sm);
+            // don't block in case we abort between putting the last instructions in the FIFO and the
+            // program actually ending.
+            // So wait until there is something in the FIFO before entering the blocking call
+            while (pio_sm_get_rx_fifo_level(pio, sm) == 0 && status != ABORTING)
+            {
+                tight_loop_contents();
+            }
+            
+            if (status != ABORTING)
+            {
+                unsigned int wait = pio_sm_get_blocking(pio, sm);
+                
+                // Check for timeout wait.
+                // This integer equals 2^32-1 - aka the biggest number and what happens when you subtract one from 0 (it wraps around)
+                // Note that we do not need to
+                if (wait == 4294967295) 
+                {
+                    waits[i] = 0; // decrement happens regardless of jump condition in PIO program. 
+                }
+                else
+                {
+                    // This does not need a -1 offset like above since we jumped on pin change, and did not unecessarily hit an extra 
+                    // jump+decrement PIO instruction. However, we do need to double it to put it back in terms of the clock frequency
+                    // since the wait loop is 2 PIO instructions (the wait length was halved when written using the "set" serial command)
+                    waits[i] = wait*2; 
+                }
+            }
         }
-        // Get completed message
-        pio_sm_get_blocking(pio, sm);
 
-        printf("Pseudoclock program complete\n");
+        // Check if we aborted in core 0 (and drained the FIFO)
+        if (status != ABORTING)
+        {
+            // Get completed message
+            pio_sm_get_blocking(pio, sm);
+
+            if (DEBUG)
+            {
+                printf("Pseudoclock program complete\n");
+            }
+        }
+        else
+        {
+            if (DEBUG)
+            {
+                printf("Draining wait FIFO\n");
+            }
+            // drain rx fifo
+            while (pio_sm_get_rx_fifo_level(pio, sm) > 0)
+            {
+                pio_sm_get(pio, sm);
+            }
+            if (DEBUG)
+            {
+                printf("Pseudoclock program aborted\n");
+            }
+        }
 
         // release the state machine
         pio_sm_unclaim(pio, sm);
 
         // Tell main core we are done
         multicore_fifo_push_blocking(1);
-        printf("Core1 loop ended\n");
+        if (DEBUG)
+        {
+            printf("Core1 loop ended\n");
+        }
     }
 }
 
@@ -160,9 +223,26 @@ void configure_gpio()
 
 void check_status()
 {
-    if (multicore_fifo_rvalid()) {
+    if (multicore_fifo_rvalid())
+    {
+        if (DEBUG)
+        {
+            printf("Reading from core 1\n");
+        }
         multicore_fifo_pop_blocking();
-        status = STOPPED;
+        if (DEBUG)
+        {
+            printf("Core 1 read finished\n");
+        }
+
+        if (status == ABORTING)
+        {
+            status = ABORTED;
+        }
+        else
+        {
+            status = STOPPED;
+        }
     }
 }
 
@@ -174,9 +254,6 @@ void loop()
     // Check if the state machine has sent us new info
     check_status();
 
-    // TODO:
-    //      Add in reset command
-    //      Add in command to read out waits
     if (strncmp(readstring, "hello", 5) == 0)
     {
         printf("hello\n");
@@ -185,9 +262,36 @@ void loop()
     {
         printf("%d\n", status);
     }
+    else if (strncmp(readstring, "abort", 5) == 0)
+    {
+        if (status != RUNNING)
+        {
+            printf("Cannot abort in manual mode.");
+        }
+        else
+        {
+            // force output low first, this should take control from the state machine
+            // and prevent it from changing the output pin state erroneously as we drain the fifo
+            status = ABORTING;
+            configure_gpio();
+            gpio_put(OUT_PIN, 0);
+            // This might be thread unsafe...oh well!
+            pio_sm_drain_tx_fifo(pio, sm);
+            // Should be done!
+            printf("ok\n");
+        }
+    }
     // Prevent manual mode commands from running during buffered execution
-    else if (status == RUNNING) {
+    else if (status == RUNNING || status == ABORTING)
+    {
         printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0.\n", readstring);
+    }
+    else if (strncmp(readstring, "readwaits", 9) == 0)
+    {
+        // Note that these are not the lengths of the waits, but how many base (system) clock ticks were left
+        // before timeout. 0 = timeout. a wait with a timeout of 8, and a value reported here as 2, means the 
+        // wait was 6 clock ticks long.
+        printf("%u %u %u %u\n", waits[0], waits[1], waits[2], waits[3]);
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
     {
@@ -197,6 +301,7 @@ void loop()
         multicore_fifo_push_blocking(1);
         // update status
         status = RUNNING;
+        printf("ok\n");
     }
     else if ((strncmp(readstring, "start", 5) == 0)) // || (strcmp(readstring, "") == 0))
     {
@@ -206,6 +311,7 @@ void loop()
         multicore_fifo_push_blocking(0);
         // update status
         status = RUNNING;
+        printf("ok\n");
     }
     else if (strncmp(readstring, "set ", 4) == 0)
     {
@@ -278,6 +384,10 @@ void loop()
             if (reps != 0)
             {
                 half_period += non_loop_path_length;
+            }
+            else
+            {
+                half_period = half_period * 2;
             }
             printf("%u %u\n", half_period, reps);
         }

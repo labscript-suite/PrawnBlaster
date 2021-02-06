@@ -49,7 +49,7 @@ shortstart:
 mainloop:
     mov x, osr                          ; (Re)load half period into X 
 highloop:
-    jmp x-- highloop                    ; Decrement half period and jump if not 0. This loops for X clock cycles
+    jmp x-- highloop                    ; Jump if not 0. Decrement half period regardless. This loops for X clock cycles
 
     ;
     ; Reload half period into X and drop to low
@@ -57,9 +57,9 @@ highloop:
     mov x, osr      side 0
 lowloop:
     
-    jmp x-- lowloop                     ; Decrement half period and jump if not 0. This loops for X clock cycles
+    jmp x-- lowloop                     ; Jump if not 0. Decrement half period regardless. This loops for X clock cycles
     
-    jmp y-- continuereps                ; Decrement reps now since we have the space, and jump to normal path if there are still more reps to do
+    jmp y-- continuereps                ; Jump to normal path if there are still more reps to do (decrement regardless)
                                         ; If we are out of reps, do the unusual path for a new instruction
 newinst:
     pull                                ; Pull next reps into OSR
@@ -92,7 +92,7 @@ waitstart:
                                         ; otherwise go to the wait loop (half period contains number loops to wait)
 waitloop:                       
     jmp pin waitdone                    ; Check if input trigger is high and jump if true
-    jmp x-- waitloop                    ; decrement wait loop counter "x" and continue looping if not 0
+    jmp x-- waitloop                    ; Continue looping if not 0. Decrement wait loop counter "x" regardless 
 
 waitdone:
     mov isr, x                          ; put X (the remaining number of wait loop cycles) in ISR as a measure of how long the wait was
