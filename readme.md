@@ -56,7 +56,7 @@ python -m serial.tools.miniterm --eol=CRLF COM4 115200
 
 Note the baudrate of `152000` and the requirement that commands be terminated with `\r\n` (CRLF).
 
-**Communication during buffered execution should be fine (pending the results of testing detailed in issue #4) as serial communication is handled by a separate core.**
+**Communication during buffered execution should be fine (pending the results of testing detailed in [issue #4](https://github.com/labscript-suite/PrawnBlaster/issues/4)) as serial communication is handled by a separate core.**
 
 ## Supported serial commands.
 Note: the commands are only read if terminated with `\r\n`.
@@ -106,7 +106,7 @@ setclock 1 50000000 0 0 0
 
 Note: When configured to use an external reference, the board will lock up if the reference is interrupted. 
 In this case you will need to power cycle the Pico. 
-See issue #1.
+See [issue #1](https://github.com/labscript-suite/PrawnBlaster/issues/1).
 
 
 ## FAQ:
