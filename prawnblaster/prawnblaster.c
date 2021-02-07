@@ -136,10 +136,10 @@ void core1_entry()
             pio_sm_put_blocking(pio, sm, instructions[3]);
             initial_inst_offset += 2;
         }
-        
+
         // start the PIO
         pio_sm_set_enabled(pio, sm, true);
-        
+
         // send remaining instructions
         for (int i = initial_inst_offset; i < instructions_to_send; i++)
         {
@@ -205,7 +205,6 @@ void core1_entry()
                 printf("Pseudoclock program aborted\n");
             }
         }
-
 
         // release the state machine
         pio_sm_unclaim(pio, sm);
@@ -475,12 +474,12 @@ void loop()
     }
     else if (strncmp(readstring, "setclock", 8) == 0)
     {
-        unsigned int src;       // 0 = internal, 1=GPIO pin 20, 2=GPIO pin 22
-        unsigned int freq;      // in Hz (up to 133 MHz)
-        unsigned int vcofreq;   // in Hz (between 400MHz and 1600MHz)
-        unsigned int div1;      // First PLL divider (between 1-7)
-        unsigned int div2;      // Second PLL divider (between 1-7)
-                                // Note: freq should equal vcofreq / div1 / div2
+        unsigned int src;     // 0 = internal, 1=GPIO pin 20, 2=GPIO pin 22
+        unsigned int freq;    // in Hz (up to 133 MHz)
+        unsigned int vcofreq; // in Hz (between 400MHz and 1600MHz)
+        unsigned int div1;    // First PLL divider (between 1-7)
+        unsigned int div2;    // Second PLL divider (between 1-7)
+                              // Note: freq should equal vcofreq / div1 / div2
         int parsed = sscanf(readstring, "%*s %u %u %u %u %u", &src, &freq, &vcofreq, &div1, &div2);
         if (parsed < 5)
         {
@@ -543,7 +542,8 @@ void loop()
                 }
 
                 // Wait for resus to complete
-                while (!resus_complete);
+                while (!resus_complete)
+                    ;
                 resus_expected = false;
 
                 printf("ok\n");
@@ -686,8 +686,8 @@ int main()
 
     // initial clock configuration
     _src = 0;
-    _freq = 100*MHZ;
-    _vcofreq = 1200*MHZ;
+    _freq = 100 * MHZ;
+    _vcofreq = 1200 * MHZ;
     _div1 = 6;
     _div2 = 2;
     // reset seen resus flag
@@ -695,7 +695,8 @@ int main()
     resus_expected = true;
     pll_deinit(pll_sys);
     // Wait for resus to complete
-    while (!resus_complete);
+    while (!resus_complete)
+        ;
     resus_expected = false;
 
     // Temp output 48MHZ clock for debug
