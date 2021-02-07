@@ -13,7 +13,7 @@ In the case of the PrawnBlaster, you can program in a series of instructions con
 
 * Only costs $5 (a tenth of the cost of the [PineBlaster](https://github.com/labscript-suite/pineblaster)).
 * Support for up to 60000 instructions (4 times the PineBlaster).
-* Each instruction can be repeated up to 4294967295 times (2^32).
+* Each instruction can be repeated up to 4294967295 times (2^32-1).
 * Minimum pulse half-period 60ns (if internal clock running at 100MHz).
 * Maximum pulse half-period ~42.9 seconds (if internal clock running at 100MHz).
 * Half-period resolution (between the minimum and maximum pulse half-period) of 10ns (if internal clock running at 100MHz).
