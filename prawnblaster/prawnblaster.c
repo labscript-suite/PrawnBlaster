@@ -31,7 +31,7 @@
 
 #include "pseudoclock.pio.h"
 
-#define DEBUG 1
+int DEBUG;
 
 // Can't seem to have this be used to define array size even though it's a constant
 const unsigned int max_instructions = 30000;
@@ -43,8 +43,8 @@ char readstring[256] = "";
 // This contains the number of clock cycles for a half period, which is currently 6 (there are 6 ASM instructions)
 const unsigned int non_loop_path_length = 6;
 
-const uint OUT_PIN = 25;
-const uint IN_PIN = 0;
+uint OUT_PIN = 15;
+uint IN_PIN = 0;
 
 PIO pio;
 uint sm;
@@ -91,6 +91,7 @@ void core1_entry()
         // Find the number of instructions to send
         int instructions_to_send = 0;
         int wait_count = 0;
+        bool previous_instruction_was_wait = false;
         for (int i = 0; i < (max_instructions * 2 + 2); i += 2)
         {
             if (instructions[i] == 0 && instructions[i + 1] == 0)
@@ -100,7 +101,16 @@ void core1_entry()
             }
             else if (instructions[i] == 0)
             {
-                wait_count += 1;
+                // Only count the first wait in a set of sequential waits
+                if (!previous_instruction_was_wait)
+                {
+                    wait_count += 1;
+                }
+                previous_instruction_was_wait = true;
+            }
+            else
+            {
+                previous_instruction_was_wait = false;
             }
         }
         if (DEBUG)
@@ -108,14 +118,30 @@ void core1_entry()
             printf("Will send %d instructions\n", instructions_to_send);
         }
 
+        int initial_inst_offset = 2;
         if (hwstart)
         {
             // send initial wait command
             pio_sm_put_blocking(pio, sm, 0);
+            pio_sm_put_blocking(pio, sm, 1); // This is ignored by the PIO code
+            // Send the first two instructions to fill the FIFO
+            pio_sm_put_blocking(pio, sm, instructions[0]);
+            pio_sm_put_blocking(pio, sm, instructions[1]);
         }
-
-        // send instructions
-        for (int i = 0; i < instructions_to_send; i++)
+        else
+        {
+            pio_sm_put_blocking(pio, sm, instructions[0]);
+            pio_sm_put_blocking(pio, sm, instructions[1]);
+            pio_sm_put_blocking(pio, sm, instructions[2]);
+            pio_sm_put_blocking(pio, sm, instructions[3]);
+            initial_inst_offset += 2;
+        }
+        
+        // start the PIO
+        pio_sm_set_enabled(pio, sm, true);
+        
+        // send remaining instructions
+        for (int i = initial_inst_offset; i < instructions_to_send; i++)
         {
             pio_sm_put_blocking(pio, sm, instructions[i]);
         }
@@ -180,8 +206,16 @@ void core1_entry()
             }
         }
 
+
         // release the state machine
         pio_sm_unclaim(pio, sm);
+
+        if (DEBUG)
+        {
+            printf("Draining TX FIFO\n");
+        }
+        // drain the tx FIFO to be safe
+        pio_sm_drain_tx_fifo(pio, sm);
 
         // Tell main core we are done
         multicore_fifo_push_blocking(1);
@@ -333,7 +367,10 @@ void resus_callback(void)
 
     // Reconfigure uart as clocks have changed
     stdio_init_all();
-    printf("Resus event fired\n");
+    if (DEBUG)
+    {
+        printf("Resus event fired\n");
+    }
 
     // Wait for uart output to finish
     uart_default_tx_wait_blocking();
@@ -349,17 +386,24 @@ void loop()
     // Check if the state machine has sent us new info
     check_status();
 
-    if (strncmp(readstring, "hello", 5) == 0)
+    if (strncmp(readstring, "status", 6) == 0)
     {
-        printf("hello\n");
+        printf("run-status:%d clock-status:%d\n", status, clock_status);
     }
-    else if (strncmp(readstring, "status", 6) == 0)
+    else if (strncmp(readstring, "debug on", 8) == 0)
     {
-        printf("%d %d\n", status, clock_status);
+        DEBUG = 1;
+        printf("ok\n");
+    }
+    else if (strncmp(readstring, "debug off", 9) == 0)
+    {
+        DEBUG = 0;
+        printf("ok\n");
     }
     else if (strncmp(readstring, "getfreqs", 8) == 0)
     {
         measure_freqs();
+        printf("ok\n");
     }
     else if (strncmp(readstring, "abort", 5) == 0)
     {
@@ -385,6 +429,50 @@ void loop()
     {
         printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0.\n", readstring);
     }
+    else if (strncmp(readstring, "setinpin", 8) == 0)
+    {
+        unsigned int pin_no;
+        int parsed = sscanf(readstring, "%*s %u", &pin_no);
+        if (parsed < 1)
+        {
+            printf("invalid request\n");
+        }
+        else if (pin_no == OUT_PIN)
+        {
+            printf("IN pin cannot be the same as the OUT pin");
+        }
+        else if (pin_no < 0 || pin_no > 19)
+        {
+            printf("IN pin must be between 0 and 19 (inclusive)\n");
+        }
+        else
+        {
+            IN_PIN = pin_no;
+            printf("ok\n");
+        }
+    }
+    else if (strncmp(readstring, "setoutpin", 9) == 0)
+    {
+        unsigned int pin_no;
+        int parsed = sscanf(readstring, "%*s %u", &pin_no);
+        if (parsed < 1)
+        {
+            printf("invalid request\n");
+        }
+        else if (pin_no == IN_PIN)
+        {
+            printf("OUT pin cannot be the same as the IN pin");
+        }
+        else if (pin_no != 25 && (pin_no < 0 || pin_no > 19))
+        {
+            printf("OUT pin must be between 0 and 19 (inclusive) or 25 (LED for debugging)\n");
+        }
+        else
+        {
+            OUT_PIN = pin_no;
+            printf("ok\n");
+        }
+    }
     else if (strncmp(readstring, "setclock", 8) == 0)
     {
         unsigned int src;       // 0 = internal, 1=GPIO pin 20, 2=GPIO pin 22
@@ -400,7 +488,10 @@ void loop()
         }
         else
         {
-            printf("Got request mode=%u, freq=%u MHz, vco_freq=%u MHz, div1=%u, div2=%u\n", src, freq / MHZ, vcofreq / MHZ, div1, div2);
+            if (DEBUG)
+            {
+                printf("Got request mode=%u, freq=%u MHz, vco_freq=%u MHz, div1=%u, div2=%u\n", src, freq / MHZ, vcofreq / MHZ, div1, div2);
+            }
             if (src > 2)
             {
                 printf("invalid request\n");
@@ -582,11 +673,12 @@ void loop()
         printf("invalid request: %s\n", readstring);
     }
 
-    memset(readstring, 0, 256 * (sizeof readstring[0]));
+    //memset(readstring, 0, 256 * (sizeof readstring[0]));
 }
 
 int main()
 {
+    DEBUG = 0;
 
     // configure resus callback that will reconfigure the clock for us
     // either when we change clock settings or when the clock fails (if external)
