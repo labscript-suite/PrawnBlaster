@@ -232,7 +232,7 @@ void readline()
     int crfound = 0;
     while (true)
     {
-        char c = fgetc(stdin);
+        char c = getchar();
         if (c == '\r')
         {
             crfound = 1;
