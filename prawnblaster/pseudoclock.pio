@@ -26,7 +26,7 @@
 
 start:
     ; Pull reps into OSR (blocking)
-    pull
+    pull block
 
     ;
     ; Start program and go high
@@ -38,7 +38,7 @@ start:
                                         ; since we just checked if it was 0 in the previous jump.
 
 indefinitewait:
-    pull                                ; read out half period for this instruction - but ignore it! We do this before waiting
+    pull block                          ; read out half period for this instruction - but ignore it! We do this before waiting
                                         ; so that we don't risk draining the FIFO. This is also necessary for the case where we have
                                         ; two waits in a row (an indefinite wait) as we might end up here mid experiment!
     wait 1 pin 0                        ; indefinitely wait for initial trigger (usually skipped by above jump)
@@ -49,7 +49,7 @@ shortstart:
     nop                     [1]         ; Some nops to balance out the paths and also ensure the FIFO has loaded data
     ;nop
     
-    pull                                ; pull half period into OSR
+    pull block                          ; pull half period into OSR
 ; This label skips loading in a new half period when we are just doing another rep of the previous half period
 mainloop:
     mov x, osr                          ; (Re)load half period into X 
@@ -67,7 +67,7 @@ lowloop:
     jmp y-- continuereps                ; Jump to normal path if there are still more reps to do (decrement regardless)
                                         ; If we are out of reps, do the unusual path for a new instruction
 newinst:
-    pull                                ; Pull next reps into OSR
+    pull block                          ; Pull next reps into OSR
     mov y, osr                          ; and transfer to Y
     jmp !y waitstart                    ; If reps is 0, jump to wait/end block
     jmp y-- shortstart  side 1          ; else go high, decrement y (since it only decrements post jump check so we need to subtract 1 off the
@@ -90,7 +90,7 @@ continuereps:
 ; Wait code (reps already loaded in Y and == 0)
 ;
 waitstart:
-    pull                                ; Load in half period
+    pull block                          ; Load in half period
     mov x, osr                          ; and place in X
     
     jmp !x stop                         ; if half period is also 0, then stop

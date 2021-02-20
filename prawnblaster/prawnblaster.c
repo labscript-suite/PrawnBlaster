@@ -23,6 +23,7 @@
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "hardware/dma.h"
 #include "hardware/pio.h"
 #include "hardware/pll.h"
 #include "hardware/clocks.h"
@@ -35,9 +36,11 @@ int DEBUG;
 
 // Can't seem to have this be used to define array size even though it's a constant
 const unsigned int max_instructions = 30000;
+const unsigned int max_waits = 100;
 // max_instructions*2 + 2
 unsigned int instructions[60002];
-unsigned int waits[4];
+// max_waits + 1
+unsigned int waits[101];
 
 char readstring[256] = "";
 // This contains the number of clock cycles for a half period, which is currently 6 (there are 6 ASM instructions)
@@ -52,9 +55,12 @@ uint sm;
 // STATUS flag
 int status;
 #define STOPPED 0
-#define RUNNING 1
-#define ABORTING 2
-#define ABORTED 3
+#define TRANSITION_TO_RUNNING 1
+#define RUNNING 2
+#define ABORT_REQUESTED 3
+#define ABORTING 4
+#define ABORTED 5
+#define TRANSITION_TO_STOP 6
 
 // Clock status flag
 int clock_status;
@@ -88,9 +94,15 @@ void core1_entry()
         sm = pio_claim_unused_sm(pio, true);
         pio_pseudoclock_init(pio, sm, offset, OUT_PIN, IN_PIN);
 
+        // Zero out waits array
+        for (int i = 0; i < max_waits; i++)
+        {
+            waits[i] = 0;
+        }
+
         // Find the number of instructions to send
         int instructions_to_send = 0;
-        int wait_count = 0;
+        int wait_count = 1; // We always send a stop message
         bool previous_instruction_was_wait = false;
         for (int i = 0; i < (max_instructions * 2 + 2); i += 2)
         {
@@ -118,79 +130,124 @@ void core1_entry()
             printf("Will send %d instructions\n", instructions_to_send);
         }
 
-        int initial_inst_offset = 2;
         if (hwstart)
         {
-            // send initial wait command
+            // send initial wait command (this precedes the DMA transfer)
             pio_sm_put_blocking(pio, sm, 0);
             pio_sm_put_blocking(pio, sm, 1); // This is ignored by the PIO code
-            // Send the first two instructions to fill the FIFO
-            pio_sm_put_blocking(pio, sm, instructions[0]);
-            pio_sm_put_blocking(pio, sm, instructions[1]);
-        }
-        else
-        {
-            pio_sm_put_blocking(pio, sm, instructions[0]);
-            pio_sm_put_blocking(pio, sm, instructions[1]);
-            pio_sm_put_blocking(pio, sm, instructions[2]);
-            pio_sm_put_blocking(pio, sm, instructions[3]);
-            initial_inst_offset += 2;
         }
 
-        // start the PIO
-        pio_sm_set_enabled(pio, sm, true);
+        // Configure automatic DMA transfer of instructions
+        int instruction_dma_chan = dma_claim_unused_channel(true);
+        dma_channel_config instruction_c = dma_channel_get_default_config(instruction_dma_chan);
 
-        // send remaining instructions
-        for (int i = initial_inst_offset; i < instructions_to_send; i++)
+        // Set transfer request signal. Technically after this, dreq==sm will be true (for PIO0)
+        // but we'll do this just incase the constants change. This sets the signal to be when
+        // there is space in the PIO FIFO
+        int instruction_dreq = 0;
+        switch (sm)
         {
-            pio_sm_put_blocking(pio, sm, instructions[i]);
+        case 0:
+            instruction_dreq = DREQ_PIO0_TX0;
+            break;
+        case 1:
+            instruction_dreq = DREQ_PIO0_TX1;
+            break;
+        case 2:
+            instruction_dreq = DREQ_PIO0_TX2;
+            break;
+        case 3:
+            instruction_dreq = DREQ_PIO0_TX3;
+            break;
+        default:
+            break;
         }
+        channel_config_set_dreq(&instruction_c, instruction_dreq);
 
-        // Now read the correct number of waits from the buffer
-        for (int i = 0; i < wait_count; i++)
+        dma_channel_configure(
+            instruction_dma_chan, // The DMA channel
+            &instruction_c,       // DMA channel config
+            &pio->txf[sm],        // Write address to the PIO TX FIFO
+            &instructions,        // Read address to the instruction array
+            instructions_to_send, // How many values to transfer
+            true                  // Start immediately
+        );
+
+        // Configure automatic transfer of wait lengths
+        int waits_dma_chan = dma_claim_unused_channel(true);
+        dma_channel_config waits_c = dma_channel_get_default_config(waits_dma_chan);
+
+        // Set transfer request signal. Technically after this, dreq==sm will be true (for PIO0)
+        // but we'll do this just incase the constants change. This sets the signal to be when
+        // there is space in the PIO FIFO
+        int waits_dreq = 0;
+        switch (sm)
         {
-            // don't block in case we abort between putting the last instructions in the FIFO and the
-            // program actually ending.
-            // So wait until there is something in the FIFO before entering the blocking call
-            while (pio_sm_get_rx_fifo_level(pio, sm) == 0 && status != ABORTING)
-            {
+        case 0:
+            waits_dreq = DREQ_PIO0_RX0;
+            break;
+        case 1:
+            waits_dreq = DREQ_PIO0_RX1;
+            break;
+        case 2:
+            waits_dreq = DREQ_PIO0_RX2;
+            break;
+        case 3:
+            waits_dreq = DREQ_PIO0_RX3;
+            break;
+        default:
+            break;
+        }
+        channel_config_set_dreq(&waits_c, waits_dreq);
+
+        // change the default to increment write address and leave read constant
+        channel_config_set_read_increment(&waits_c, false);
+        channel_config_set_write_increment(&waits_c, true);
+
+        dma_channel_configure(
+            waits_dma_chan, // The DMA channel
+            &waits_c,       // DMA channel config
+            &waits,         // write address to the instruction array
+            &pio->rxf[sm],  // Read address from the PIO RX FIFO
+            wait_count,     // How many values to transfer
+            true            // Start immediately
+        );
+
+        // Check that this shot has not been aborted already
+        if (status == TRANSITION_TO_RUNNING)
+        {
+            // update the status
+            status = RUNNING;
+
+            // start the PIO
+            pio_sm_set_enabled(pio, sm, true);
+
+            // Wait for DMA transfers to finish
+            while (dma_channel_is_busy(instruction_dma_chan) && status != ABORT_REQUESTED)
                 tight_loop_contents();
-            }
-
-            if (status != ABORTING)
-            {
-                unsigned int wait = pio_sm_get_blocking(pio, sm);
-
-                // Check for timeout wait.
-                // This integer equals 2^32-1 - aka the biggest number and what happens when you subtract one from 0 (it wraps around)
-                // Note that we do not need to
-                if (wait == 4294967295)
-                {
-                    waits[i] = 0; // decrement happens regardless of jump condition in PIO program.
-                }
-                else
-                {
-                    // This does not need a -1 offset like above since we jumped on pin change, and did not unecessarily hit an extra
-                    // jump+decrement PIO instruction. However, we do need to double it to put it back in terms of the clock frequency
-                    // since the wait loop is 2 PIO instructions (the wait length was halved when written using the "set" serial command)
-                    waits[i] = wait * 2;
-                }
-            }
+            while (dma_channel_is_busy(waits_dma_chan) && status != ABORT_REQUESTED)
+                tight_loop_contents();
         }
 
-        // Check if we aborted in core 0 (and drained the FIFO)
-        if (status != ABORTING)
+        // If we aborted, update the status to acknowledge the abort
+        if (status == ABORT_REQUESTED)
         {
-            // Get completed message
-            pio_sm_get_blocking(pio, sm);
-
             if (DEBUG)
             {
-                printf("Pseudoclock program complete\n");
+                printf("Aborting pseudoclock program\n");
             }
-        }
-        else
-        {
+
+            status = ABORTING;
+            // Abort DMA transfer if we're aborting the shot
+            dma_channel_abort(instruction_dma_chan);
+            dma_channel_abort(waits_dma_chan);
+
+            // Drain the FIFOs
+            if (DEBUG)
+            {
+                printf("Draining instruction FIFO\n");
+            }
+            pio_sm_drain_tx_fifo(pio, sm);
             if (DEBUG)
             {
                 printf("Draining wait FIFO\n");
@@ -205,6 +262,32 @@ void core1_entry()
                 printf("Pseudoclock program aborted\n");
             }
         }
+        // otherwise put in the transition to stop state
+        else
+        {
+            if (DEBUG)
+            {
+                printf("Pseudoclock program complete\n");
+            }
+
+            status = TRANSITION_TO_STOP;
+
+            // Now process the read waits (but ignore the last one that was the stop signal)
+            for (int i = 0; i < wait_count - 1; i++)
+            {
+                // Check for timeout wait.
+                // This integer equals 2^32-1 - aka the biggest number and what happens when you subtract one from 0 (it wraps around)
+                // Note that we do not need to
+                if (waits[i] == 4294967295)
+                {
+                    waits[i] = 0; // decrement happens regardless of jump condition in PIO program.
+                }
+            }
+        }
+
+        // Free the DMA channels
+        dma_channel_unclaim(instruction_dma_chan);
+        dma_channel_unclaim(waits_dma_chan);
 
         // release the state machine
         pio_sm_unclaim(pio, sm);
@@ -215,6 +298,16 @@ void core1_entry()
         }
         // drain the tx FIFO to be safe
         pio_sm_drain_tx_fifo(pio, sm);
+
+        // Update the status
+        if (status == ABORTING)
+        {
+            status = ABORTED;
+        }
+        else
+        {
+            status = STOPPED;
+        }
 
         // Tell main core we are done
         multicore_fifo_push_blocking(1);
@@ -285,15 +378,6 @@ void check_status()
         if (DEBUG)
         {
             printf("Core 1 read finished\n");
-        }
-
-        if (status == ABORTING)
-        {
-            status = ABORTED;
-        }
-        else
-        {
-            status = STOPPED;
         }
     }
 }
@@ -406,27 +490,25 @@ void loop()
     }
     else if (strncmp(readstring, "abort", 5) == 0)
     {
-        if (status != RUNNING)
+        if (status != RUNNING && status != TRANSITION_TO_RUNNING)
         {
-            printf("Cannot abort in manual mode.");
+            printf("Can only abort when status is 1 or 2 (transitioning to running or running)");
         }
         else
         {
             // force output low first, this should take control from the state machine
             // and prevent it from changing the output pin state erroneously as we drain the fifo
-            status = ABORTING;
+            status = ABORT_REQUESTED;
             configure_gpio();
             gpio_put(OUT_PIN, 0);
-            // This might be thread unsafe...oh well!
-            pio_sm_drain_tx_fifo(pio, sm);
             // Should be done!
             printf("ok\n");
         }
     }
     // Prevent manual mode commands from running during buffered execution
-    else if (status == RUNNING || status == ABORTING)
+    else if (status != ABORTED && status != STOPPED)
     {
-        printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0.\n", readstring);
+        printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0 or 5 (stopped or aborted).\n", readstring);
     }
     else if (strncmp(readstring, "setinpin", 8) == 0)
     {
@@ -550,12 +632,27 @@ void loop()
             }
         }
     }
-    else if (strncmp(readstring, "getwaits", 8) == 0)
+    else if (strncmp(readstring, "getwait", 7) == 0)
     {
-        // Note that these are not the lengths of the waits, but how many base (system) clock ticks were left
-        // before timeout. 0 = timeout. a wait with a timeout of 8, and a value reported here as 2, means the
-        // wait was 6 clock ticks long.
-        printf("%u %u %u %u\n", waits[0], waits[1], waits[2], waits[3]);
+        unsigned int addr;
+        int parsed = sscanf(readstring, "%*s %u", &addr);
+        if (parsed < 1)
+        {
+            printf("invalid request\n");
+        }
+        else if (addr >= max_waits)
+        {
+            printf("invalid address\n");
+        }
+        else
+        {
+            // Note that these are not the lengths of the waits, but how many base (system) clock ticks were left
+            // before timeout. 0 = timeout. a wait with a timeout of 8, and a value reported here as 2, means the
+            // wait was 6 clock ticks long.
+            //
+            // We multiply by two here to counteract the divide by two when storing (see below)
+            printf("%u\n", waits[addr] * 2);
+        }
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
     {
@@ -564,7 +661,7 @@ void loop()
         // Notify state machine to start
         multicore_fifo_push_blocking(1);
         // update status
-        status = RUNNING;
+        status = TRANSITION_TO_RUNNING;
         printf("ok\n");
     }
     else if ((strncmp(readstring, "start", 5) == 0)) // || (strcmp(readstring, "") == 0))
@@ -574,7 +671,7 @@ void loop()
         // Notify state machine to start
         multicore_fifo_push_blocking(0);
         // update status
-        status = RUNNING;
+        status = TRANSITION_TO_RUNNING;
         printf("ok\n");
     }
     else if (strncmp(readstring, "set ", 4) == 0)
