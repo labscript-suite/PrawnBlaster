@@ -1,5 +1,5 @@
 add_executable(prawnblaster
-        prawnblaster.c
+        prawnblaster.cpp
         )
 
 pico_generate_pio_header(prawnblaster ${CMAKE_CURRENT_LIST_DIR}/pseudoclock.pio)
