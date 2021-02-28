@@ -340,8 +340,7 @@ void free_pseudoclock_pio_sm(pseudoclock_config *config)
 //             {
 //                 instructions[j] = instructions[old_max_words*i+j];
 //             }
-            
-            
+
 //             // Ensure last instructions in first pseudoclock are 0
 //             instructions[(i+1)*new_max_words-2] = 0;
 //             instructions[(i+1)*new_max_words-1] = 0;
@@ -434,10 +433,26 @@ void core1_entry()
             {
                 if (pseudoclock_configs[i].configured)
                 {
+                    if (DEBUG)
+                    {
+                        printf("Tight loop for pseudoclock %d beginning\n", i);
+                    }
                     while (dma_channel_is_busy(pseudoclock_configs[i].instructions_dma_channel) && status != ABORT_REQUESTED)
+                    {
                         tight_loop_contents();
+                    }
+                    if (DEBUG)
+                    {
+                        printf("Tight loop for pseudoclock waits %d beginning\n", i);
+                    }
                     while (dma_channel_is_busy(pseudoclock_configs[i].waits_dma_channel) && status != ABORT_REQUESTED)
+                    {
                         tight_loop_contents();
+                    }
+                    if (DEBUG)
+                    {
+                        printf("Tight loops done for pseudoclock %d\n", i);
+                    }
                 }
             }
         }
@@ -699,7 +714,7 @@ void loop()
                 waits[i] = 0;
             }
             // reset instructions
-            for (int i = 0; i < max_instructions*2 + 8; i++)
+            for (int i = 0; i < max_instructions * 2 + 8; i++)
             {
                 instructions[i] = 0;
             }
@@ -880,7 +895,7 @@ void loop()
             // wait was 6 clock ticks long.
             //
             // We multiply by two here to counteract the divide by two when storing (see below)
-            printf("%u\n", waits[pseudoclock*(max_waits/num_pseudoclocks_in_use)+addr] * 2);
+            printf("%u\n", waits[pseudoclock * (max_waits / num_pseudoclocks_in_use) + addr] * 2);
         }
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
@@ -917,7 +932,7 @@ void loop()
         unsigned int reps;
         unsigned int pseudoclock;
         int parsed = sscanf(readstring, "%*s %u %u %u %u", &pseudoclock, &addr, &half_period, &reps);
-        int address_offset = pseudoclock*(max_instructions*2/num_pseudoclocks_in_use+2);
+        int address_offset = pseudoclock * (max_instructions * 2 / num_pseudoclocks_in_use + 2);
         if (parsed < 4)
         {
             printf("invalid request\n");
@@ -933,11 +948,11 @@ void loop()
         else if (reps == 0)
         {
             // This indicates either a stop or a wait instruction
-            instructions[address_offset + addr] = 0;
+            instructions[address_offset + addr * 2] = 0;
             if (half_period == 0)
             {
                 // It's a stop instruction
-                instructions[address_offset + addr + 1] = 0;
+                instructions[address_offset + addr * 2 + 1] = 0;
                 printf("ok\n");
             }
             else if (half_period >= 2)
@@ -945,7 +960,7 @@ void loop()
                 // It's a wait instruction:
                 // The half period contains the number of ASM wait loops to wait for before continuing.
                 // The wait loop conatins two ASM instructions, so we divide by 2 here.
-                instructions[address_offset + addr + 1] = half_period / 2;
+                instructions[address_offset + addr * 2 + 1] = half_period / 2;
                 printf("ok\n");
             }
             else
@@ -963,8 +978,8 @@ void loop()
         }
         else
         {
-            instructions[address_offset + addr] = reps;
-            instructions[address_offset + addr + 1] = half_period - non_loop_path_length;
+            instructions[address_offset + addr * 2] = reps;
+            instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
             printf("ok\n");
         }
     }
@@ -973,7 +988,7 @@ void loop()
         unsigned int addr;
         unsigned int pseudoclock;
         int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &addr);
-        int address_offset = pseudoclock*(max_instructions*2/num_pseudoclocks_in_use + 2);
+        int address_offset = pseudoclock * (max_instructions * 2 / num_pseudoclocks_in_use + 2);
         if (parsed < 2)
         {
             printf("invalid request\n");
@@ -988,8 +1003,8 @@ void loop()
         }
         else
         {
-            uint half_period = instructions[address_offset + addr + 1];
-            uint reps = instructions[address_offset + addr];
+            uint half_period = instructions[address_offset + addr * 2 + 1];
+            uint reps = instructions[address_offset + addr * 2];
             if (reps != 0)
             {
                 half_period += non_loop_path_length;
