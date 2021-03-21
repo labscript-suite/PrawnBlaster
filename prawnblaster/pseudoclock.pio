@@ -41,7 +41,7 @@ indefinitewait:
     pull block                          ; read out half period for this instruction - but ignore it! We do this before waiting
                                         ; so that we don't risk draining the FIFO. This is also necessary for the case where we have
                                         ; two waits in a row (an indefinite wait) as we might end up here mid experiment!
-    wait 1 pin 0            [5]         ; indefinitely wait for initial trigger (usually skipped by above jump). Delay by 5 cycles after condition reached
+    wait 1 pin 0            [2]         ; indefinitely wait for initial trigger (usually skipped by above jump). Delay by 5 cycles after condition reached
                                         ; so that the length of this path matches the length of the resume from wait path
     jmp start                           ; Must load in new value for reps and load in half period
 
