@@ -590,18 +590,17 @@ void resus_callback(void)
     // If we were not expecting a resus, switch back to internal clock
     if (!resus_expected)
     {
-        // kill external clock pin
-        gpio_set_function((_src == 2 ? 22 : 20), GPIO_FUNC_NULL);
-
         // reinitialise pll
-        pll_init(pll_sys, 1, 1200, 6, 2);
-
+        pll_init(pll_sys, 1, 1200 * MHZ, 6, 2);
         // Configure internal clock
         clock_configure(clk_sys,
                         CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX,
                         CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
                         100 * MHZ,
                         100 * MHZ);
+
+        // kill external clock pin
+        gpio_set_function((_src == 2 ? 22 : 20), GPIO_FUNC_NULL);
 
         // update clock status
         clock_status = INTERNAL;
@@ -849,21 +848,7 @@ void loop()
                 // reset seen resus flag
                 resus_complete = false;
                 resus_expected = true;
-
-                if (old_src > 0)
-                {
-                    // cancel clock input on this pin to trigger resus (and thus reconfigure)
-                    gpio_set_function((old_src == 2 ? 22 : 20), GPIO_FUNC_NULL);
-                }
-                else
-                {
-                    // Break PLL to trigger resus (and thus reconfigure)
-                    pll_deinit(pll_sys);
-                }
-
-                // Wait for resus to complete
-                while (!resus_complete)
-                    ;
+                resus_callback();
                 resus_expected = false;
 
                 printf("ok\n");
@@ -1089,10 +1074,7 @@ int main()
     // reset seen resus flag
     resus_complete = false;
     resus_expected = true;
-    pll_deinit(pll_sys);
-    // Wait for resus to complete
-    while (!resus_complete)
-        ;
+    resus_callback();
     resus_expected = false;
 
     // Temp output 48MHZ clock for debug
