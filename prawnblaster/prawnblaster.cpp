@@ -941,12 +941,15 @@ void loop()
                 instructions[address_offset + addr * 2 + 1] = 0;
                 printf("ok\n");
             }
-            else if (half_period >= 2)
+            else if (half_period >= 5)
             {
                 // It's a wait instruction:
                 // The half period contains the number of ASM wait loops to wait for before continuing.
+                // There are 3 clock cycles of delay between ending the previous instruction and being 
+                // ready to detect the trigger to end the wait. So we also subtract these off to ensure
+                // the timeout is accurate.
                 // The wait loop conatins two ASM instructions, so we divide by 2 here.
-                instructions[address_offset + addr * 2 + 1] = half_period / 2;
+                instructions[address_offset + addr * 2 + 1] = (half_period - 3) / 2;
                 printf("ok\n");
             }
             else
@@ -997,7 +1000,14 @@ void loop()
             }
             else
             {
+                // account for wait loop being 2 ASM instructions long
                 half_period = half_period * 2;
+                // If not a stop instruction
+                if (half_period != 0)
+                {
+                    // acount for 3 ASM instructions between end of previous pseudoclock instruction and start of wait loop
+                    half_period += 3;
+                }
             }
             printf("%u %u\n", half_period, reps);
         }
