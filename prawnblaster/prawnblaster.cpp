@@ -247,7 +247,7 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
     dma_channel_configure(
         config->waits_dma_channel,      // The DMA channel
         &waits_c,                       // DMA channel config
-        &waits[config->sm * max_waits], // write address to the instruction array
+        &waits[config->sm * max_waits], // write address to the waits array
         &config->pio->rxf[config->sm],  // Read address from the PIO RX FIFO
         wait_count,                     // How many values to transfer
         true                            // Start immediately
@@ -876,6 +876,7 @@ void loop()
         unsigned int addr;
         unsigned int pseudoclock;
         int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &addr);
+        int waits_per_pseudoclock = (max_waits / num_pseudoclocks_in_use) + 1;
         if (parsed < 2)
         {
             printf("invalid request\n");
@@ -884,7 +885,7 @@ void loop()
         {
             printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
         }
-        else if (addr >= max_waits)
+        else if (addr >= waits_per_pseudoclock)
         {
             printf("invalid address\n");
         }
@@ -895,7 +896,7 @@ void loop()
             // wait was 6 clock ticks long.
             //
             // We multiply by two here to counteract the divide by two when storing (see below)
-            printf("%u\n", waits[pseudoclock * (max_waits / num_pseudoclocks_in_use) + addr] * 2);
+            printf("%u\n", waits[pseudoclock * waits_per_pseudoclock + addr] * 2);
         }
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
