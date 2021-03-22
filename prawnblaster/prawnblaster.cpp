@@ -36,21 +36,23 @@ int DEBUG;
 
 // Can't seem to have this be used to define array size even though it's a constant
 const unsigned int max_instructions = 30000;
-const unsigned int max_waits = 100;
-// max_instructions*2 + 2
-unsigned int instructions[60002];
-// max_waits + 1
-unsigned int waits[101];
+const unsigned int max_waits = 400;
+// max_instructions*2 + 8
+unsigned int instructions[60008];
+// max_waits + 4
+unsigned int waits[404];
 
 char readstring[256] = "";
 // This contains the number of clock cycles for a half period, which is currently 6 (there are 6 ASM instructions)
 const unsigned int non_loop_path_length = 6;
 
-uint OUT_PIN = 15;
-uint IN_PIN = 0;
+uint OUT_PINS[4]; // = 15;
+uint IN_PINS[4];  //  = 0;
 
-PIO pio;
-uint sm;
+int num_pseudoclocks_in_use;
+
+// PIO pio;
+// uint sm;
 
 // STATUS flag
 int status;
@@ -76,11 +78,290 @@ unsigned int _vcofreq;
 unsigned int _div1;
 unsigned int _div2;
 
+struct pseudoclock_config
+{
+    PIO pio;
+    uint sm;
+    uint OUT_PIN;
+    uint IN_PIN;
+    int instructions_dma_channel;
+    int waits_dma_channel;
+    int words_to_send;
+    int waits_to_send;
+    bool configured;
+};
+
+bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, uint32_t hwstart, int max_instructions_per_pseudoclock, int max_waits_per_pseudoclock)
+{
+    // Claim the PUI
+    pio_claim_sm_mask(config->pio, 1u << config->sm);
+
+    // Zero out waits array
+    int max_waits = (max_waits_per_pseudoclock + 1);
+    for (int i = config->sm * max_waits; i < (config->sm + 1) * max_waits; i++)
+    {
+        waits[i] = 0;
+    }
+
+    // Find the number of 32 bit words to send
+    int words_to_send = 0;
+    int wait_count = 1; // We always send a stop message
+    bool previous_instruction_was_wait = false;
+    int max_words = (max_instructions_per_pseudoclock * 2 + 2);
+    for (int i = config->sm * max_words; i < ((config->sm + 1) * max_words); i += 2)
+    {
+        if (instructions[i] == 0 && instructions[i + 1] == 0)
+        {
+            words_to_send = i + 2 - config->sm * max_words;
+            break;
+        }
+        else if (instructions[i] == 0)
+        {
+            // Only count the first wait in a set of sequential waits
+            if (!previous_instruction_was_wait)
+            {
+                wait_count += 1;
+            }
+            previous_instruction_was_wait = true;
+        }
+        else
+        {
+            previous_instruction_was_wait = false;
+        }
+    }
+
+    // Check we don't have too many instructions to send
+    if (words_to_send > max_words)
+    {
+        if (DEBUG)
+        {
+            // Divide by 2 to put it back in terms of "half_period reps" instructions
+            // Subtract off two to remove the stop instruction from the count
+            printf("Too many instructions to send to pseudoclock %d (%d > %d)\n", config->sm, (words_to_send - 2) / 2, max_words / 2);
+        }
+        return false;
+    }
+
+    // Check we don't have too many waits to send
+    if (wait_count > max_waits)
+    {
+        if (DEBUG)
+        {
+            // subtract off one to remove the stop instruction from the wait count
+            printf("Too many waits to send to pseudoclock %d (%d > %d)\n", config->sm, wait_count - 1, max_waits_per_pseudoclock);
+        }
+        return false;
+    }
+
+    if (DEBUG)
+    {
+        // word count:
+        //      Divide by 2 to put it back in terms of "half_period reps" instructions
+        //      Subtract off two to remove the stop instruction from the count
+        // wait count:
+        //      subtract off one to remove the stop instruction from the wait count
+        printf("Will send %d instructions containing %d waits to pseudoclock %d\n", (words_to_send - 2) / 2, wait_count - 1, config->sm);
+    }
+
+    // Configure PIO Statemachine
+    pio_pseudoclock_init(config->pio, config->sm, prog_offset, config->OUT_PIN, config->IN_PIN);
+
+    // Update configuration with words/waits to send
+    config->words_to_send = words_to_send;
+    config->waits_to_send = wait_count;
+
+    if (hwstart)
+    {
+        // send initial wait command (this precedes the DMA transfer)
+        pio_sm_put_blocking(config->pio, config->sm, 0);
+        pio_sm_put_blocking(config->pio, config->sm, 1); // This is ignored by the PIO code
+    }
+
+    // Configure automatic DMA transfer of instructions
+    config->instructions_dma_channel = dma_claim_unused_channel(true);
+    dma_channel_config instruction_c = dma_channel_get_default_config(config->instructions_dma_channel);
+
+    // Set transfer request signal. Technically after this, dreq==sm will be true (for PIO0)
+    // but we'll do this just incase the constants change. This sets the signal to be when
+    // there is space in the PIO FIFO
+    int instruction_dreq = 0;
+    switch (config->sm)
+    {
+    case 0:
+        instruction_dreq = DREQ_PIO0_TX0;
+        break;
+    case 1:
+        instruction_dreq = DREQ_PIO0_TX1;
+        break;
+    case 2:
+        instruction_dreq = DREQ_PIO0_TX2;
+        break;
+    case 3:
+        instruction_dreq = DREQ_PIO0_TX3;
+        break;
+    default:
+        break;
+    }
+    channel_config_set_dreq(&instruction_c, instruction_dreq);
+
+    dma_channel_configure(
+        config->instructions_dma_channel,      // The DMA channel
+        &instruction_c,                        // DMA channel config
+        &config->pio->txf[config->sm],         // Write address to the PIO TX FIFO
+        &instructions[config->sm * max_words], // Read address to the instruction array
+        words_to_send,                         // How many values to transfer
+        true                                   // Start immediately
+    );
+
+    // Configure automatic transfer of wait lengths
+    config->waits_dma_channel = dma_claim_unused_channel(true);
+    dma_channel_config waits_c = dma_channel_get_default_config(config->waits_dma_channel);
+
+    // Set transfer request signal. Technically after this, dreq==sm will be true (for PIO0)
+    // but we'll do this just incase the constants change. This sets the signal to be when
+    // there is space in the PIO FIFO
+    int waits_dreq = 0;
+    switch (config->sm)
+    {
+    case 0:
+        waits_dreq = DREQ_PIO0_RX0;
+        break;
+    case 1:
+        waits_dreq = DREQ_PIO0_RX1;
+        break;
+    case 2:
+        waits_dreq = DREQ_PIO0_RX2;
+        break;
+    case 3:
+        waits_dreq = DREQ_PIO0_RX3;
+        break;
+    default:
+        break;
+    }
+    channel_config_set_dreq(&waits_c, waits_dreq);
+
+    // change the default to increment write address and leave read constant
+    channel_config_set_read_increment(&waits_c, false);
+    channel_config_set_write_increment(&waits_c, true);
+
+    dma_channel_configure(
+        config->waits_dma_channel,      // The DMA channel
+        &waits_c,                       // DMA channel config
+        &waits[config->sm * max_waits], // write address to the waits array
+        &config->pio->rxf[config->sm],  // Read address from the PIO RX FIFO
+        wait_count,                     // How many values to transfer
+        true                            // Start immediately
+    );
+
+    config->configured = true;
+
+    return true;
+}
+
+void process_waits(pseudoclock_config *config, int max_waits_per_pseudoclock)
+{
+
+    // Now process the read waits (but ignore the last one that was the stop signal)
+    int max_waits = (max_waits_per_pseudoclock + 1);
+    for (int i = config->sm * max_waits; i < (config->sm * max_waits) + config->waits_to_send - 1; i++)
+    {
+        // Check for timeout wait.
+        // This integer equals 2^32-1 - aka the biggest number and what happens when you subtract one from 0 (it wraps around)
+        // Note that we do not need to
+        if (waits[i] == 4294967295)
+        {
+            waits[i] = 0; // decrement happens regardless of jump condition in PIO program.
+        }
+    }
+}
+
+void free_pseudoclock_pio_sm(pseudoclock_config *config)
+{
+
+    if (status == ABORTING)
+    {
+        // Abort DMA transfer if we're aborting the shot
+        dma_channel_abort(config->instructions_dma_channel);
+        dma_channel_abort(config->waits_dma_channel);
+
+        // Drain the FIFOs
+        if (DEBUG)
+        {
+            printf("Draining instruction FIFO\n");
+        }
+        pio_sm_drain_tx_fifo(config->pio, config->sm);
+        if (DEBUG)
+        {
+            printf("Draining wait FIFO\n");
+        }
+        // drain rx fifo
+        while (pio_sm_get_rx_fifo_level(config->pio, config->sm) > 0)
+        {
+            pio_sm_get(config->pio, config->sm);
+        }
+        if (DEBUG)
+        {
+            printf("Pseudoclock program aborted\n");
+        }
+    }
+
+    // Free the DMA channels
+    dma_channel_unclaim(config->instructions_dma_channel);
+    dma_channel_unclaim(config->waits_dma_channel);
+
+    if (DEBUG)
+    {
+        printf("Draining TX FIFO\n");
+    }
+    // drain the tx FIFO to be safe
+    pio_sm_drain_tx_fifo(config->pio, config->sm);
+
+    // release the state machine
+    pio_sm_unclaim(config->pio, config->sm);
+}
+
+// void rearrange_instructions(int old_num, int new_num)
+// {
+//     // reset all waits
+//     for (int i = 0; i < max_waits + 4; i++)
+//     {
+//         waits[i] = 0;
+//     }
+
+//     int old_max_words = max_instructions*2/old_num+2;
+//     int new_max_words = max_instructions*2/new_num+2;
+//     // move instructions
+//     if (old_num < new_num)
+//     {
+//         // Move instructions
+//         for (int i = 0; i < new_num; i++)
+//         {
+//             for (int j = i * new_max_words; j < ((i + 1) * new_max_words); j += 1)
+//             {
+//                 instructions[j] = instructions[old_max_words*i+j];
+//             }
+
+//             // Ensure last instructions in first pseudoclock are 0
+//             instructions[(i+1)*new_max_words-2] = 0;
+//             instructions[(i+1)*new_max_words-1] = 0;
+
+//             // Null out old instruction set
+//             for (int j = i* old_max_words; j < ((i + 1) * old_max_words); j += 1)
+//             {
+//                 instructions[j] = 0;
+//             }
+//         }
+//     }
+//     else
+//     {
+
+//     }
+// }
+
 void core1_entry()
 {
     // PIO initialisation
-    pio = pio0;
-    uint offset = pio_add_program(pio, &pseudoclock_program);
+    uint offset = pio_add_program(pio0, &pseudoclock_program);
 
     // announce we are ready
     multicore_fifo_push_blocking(0);
@@ -90,128 +371,43 @@ void core1_entry()
         // wait for message from main core
         uint32_t hwstart = multicore_fifo_pop_blocking();
 
-        // Configure PIO Statemachine
-        sm = pio_claim_unused_sm(pio, true);
-        pio_pseudoclock_init(pio, sm, offset, OUT_PIN, IN_PIN);
-
-        // Zero out waits array
-        for (int i = 0; i < max_waits; i++)
+        // Initialise configs
+        pseudoclock_config pseudoclock_configs[4];
+        bool success = true;
+        for (int i = 0; i < num_pseudoclocks_in_use; i++)
         {
-            waits[i] = 0;
-        }
-
-        // Find the number of instructions to send
-        int instructions_to_send = 0;
-        int wait_count = 1; // We always send a stop message
-        bool previous_instruction_was_wait = false;
-        for (int i = 0; i < (max_instructions * 2 + 2); i += 2)
-        {
-            if (instructions[i] == 0 && instructions[i + 1] == 0)
+            pseudoclock_configs[i].pio = pio0;
+            pseudoclock_configs[i].sm = i;
+            pseudoclock_configs[i].OUT_PIN = OUT_PINS[i];
+            pseudoclock_configs[i].IN_PIN = IN_PINS[i];
+            success = configure_pseudoclock_pio_sm(&pseudoclock_configs[i], offset, hwstart, max_instructions / num_pseudoclocks_in_use, max_waits / num_pseudoclocks_in_use);
+            if (!success)
             {
-                instructions_to_send = i + 2;
+                if (DEBUG)
+                {
+                    printf("Failed to configure pseudoclock %d\n. Aborting.", i);
+                }
                 break;
             }
-            else if (instructions[i] == 0)
+        }
+
+        if (!success)
+        {
+            status = ABORTING;
+            for (int i = 0; i < num_pseudoclocks_in_use; i++)
             {
-                // Only count the first wait in a set of sequential waits
-                if (!previous_instruction_was_wait)
+                if (pseudoclock_configs[i].configured)
                 {
-                    wait_count += 1;
+                    free_pseudoclock_pio_sm(&pseudoclock_configs[i]);
                 }
-                previous_instruction_was_wait = true;
             }
-            else
+            status = ABORTED;
+            if (DEBUG)
             {
-                previous_instruction_was_wait = false;
+                printf("Core1 loop ended\n");
             }
+            continue;
         }
-        if (DEBUG)
-        {
-            printf("Will send %d instructions\n", instructions_to_send);
-        }
-
-        if (hwstart)
-        {
-            // send initial wait command (this precedes the DMA transfer)
-            pio_sm_put_blocking(pio, sm, 0);
-            pio_sm_put_blocking(pio, sm, 1); // This is ignored by the PIO code
-        }
-
-        // Configure automatic DMA transfer of instructions
-        int instruction_dma_chan = dma_claim_unused_channel(true);
-        dma_channel_config instruction_c = dma_channel_get_default_config(instruction_dma_chan);
-
-        // Set transfer request signal. Technically after this, dreq==sm will be true (for PIO0)
-        // but we'll do this just incase the constants change. This sets the signal to be when
-        // there is space in the PIO FIFO
-        int instruction_dreq = 0;
-        switch (sm)
-        {
-        case 0:
-            instruction_dreq = DREQ_PIO0_TX0;
-            break;
-        case 1:
-            instruction_dreq = DREQ_PIO0_TX1;
-            break;
-        case 2:
-            instruction_dreq = DREQ_PIO0_TX2;
-            break;
-        case 3:
-            instruction_dreq = DREQ_PIO0_TX3;
-            break;
-        default:
-            break;
-        }
-        channel_config_set_dreq(&instruction_c, instruction_dreq);
-
-        dma_channel_configure(
-            instruction_dma_chan, // The DMA channel
-            &instruction_c,       // DMA channel config
-            &pio->txf[sm],        // Write address to the PIO TX FIFO
-            &instructions,        // Read address to the instruction array
-            instructions_to_send, // How many values to transfer
-            true                  // Start immediately
-        );
-
-        // Configure automatic transfer of wait lengths
-        int waits_dma_chan = dma_claim_unused_channel(true);
-        dma_channel_config waits_c = dma_channel_get_default_config(waits_dma_chan);
-
-        // Set transfer request signal. Technically after this, dreq==sm will be true (for PIO0)
-        // but we'll do this just incase the constants change. This sets the signal to be when
-        // there is space in the PIO FIFO
-        int waits_dreq = 0;
-        switch (sm)
-        {
-        case 0:
-            waits_dreq = DREQ_PIO0_RX0;
-            break;
-        case 1:
-            waits_dreq = DREQ_PIO0_RX1;
-            break;
-        case 2:
-            waits_dreq = DREQ_PIO0_RX2;
-            break;
-        case 3:
-            waits_dreq = DREQ_PIO0_RX3;
-            break;
-        default:
-            break;
-        }
-        channel_config_set_dreq(&waits_c, waits_dreq);
-
-        // change the default to increment write address and leave read constant
-        channel_config_set_read_increment(&waits_c, false);
-        channel_config_set_write_increment(&waits_c, true);
-
-        dma_channel_configure(
-            waits_dma_chan, // The DMA channel
-            &waits_c,       // DMA channel config
-            &waits,         // write address to the instruction array
-            &pio->rxf[sm],  // Read address from the PIO RX FIFO
-            wait_count,     // How many values to transfer
-            true            // Start immediately
-        );
 
         // Check that this shot has not been aborted already
         if (status == TRANSITION_TO_RUNNING)
@@ -219,14 +415,46 @@ void core1_entry()
             // update the status
             status = RUNNING;
 
-            // start the PIO
-            pio_sm_set_enabled(pio, sm, true);
+            unsigned int current_pio_ctrl_val = pio0->ctrl;
+            for (int i = 0; i < num_pseudoclocks_in_use; i++)
+            {
+                if (pseudoclock_configs[i].configured)
+                {
+                    current_pio_ctrl_val = (current_pio_ctrl_val & ~(1u << pseudoclock_configs[i].sm)) | (!!true << pseudoclock_configs[i].sm);
+                }
+                // pio_sm_set_enabled(pseudoclock_configs[i].pio, pseudoclock_configs[i].sm, true);
+            }
+            //
+            // start the PIOs together
+            pio0->ctrl = current_pio_ctrl_val;
 
             // Wait for DMA transfers to finish
-            while (dma_channel_is_busy(instruction_dma_chan) && status != ABORT_REQUESTED)
-                tight_loop_contents();
-            while (dma_channel_is_busy(waits_dma_chan) && status != ABORT_REQUESTED)
-                tight_loop_contents();
+            for (int i = 0; i < num_pseudoclocks_in_use; i++)
+            {
+                if (pseudoclock_configs[i].configured)
+                {
+                    if (DEBUG)
+                    {
+                        printf("Tight loop for pseudoclock %d beginning\n", i);
+                    }
+                    while (dma_channel_is_busy(pseudoclock_configs[i].instructions_dma_channel) && status != ABORT_REQUESTED)
+                    {
+                        tight_loop_contents();
+                    }
+                    if (DEBUG)
+                    {
+                        printf("Tight loop for pseudoclock waits %d beginning\n", i);
+                    }
+                    while (dma_channel_is_busy(pseudoclock_configs[i].waits_dma_channel) && status != ABORT_REQUESTED)
+                    {
+                        tight_loop_contents();
+                    }
+                    if (DEBUG)
+                    {
+                        printf("Tight loops done for pseudoclock %d\n", i);
+                    }
+                }
+            }
         }
 
         // If we aborted, update the status to acknowledge the abort
@@ -238,29 +466,6 @@ void core1_entry()
             }
 
             status = ABORTING;
-            // Abort DMA transfer if we're aborting the shot
-            dma_channel_abort(instruction_dma_chan);
-            dma_channel_abort(waits_dma_chan);
-
-            // Drain the FIFOs
-            if (DEBUG)
-            {
-                printf("Draining instruction FIFO\n");
-            }
-            pio_sm_drain_tx_fifo(pio, sm);
-            if (DEBUG)
-            {
-                printf("Draining wait FIFO\n");
-            }
-            // drain rx fifo
-            while (pio_sm_get_rx_fifo_level(pio, sm) > 0)
-            {
-                pio_sm_get(pio, sm);
-            }
-            if (DEBUG)
-            {
-                printf("Pseudoclock program aborted\n");
-            }
         }
         // otherwise put in the transition to stop state
         else
@@ -272,32 +477,23 @@ void core1_entry()
 
             status = TRANSITION_TO_STOP;
 
-            // Now process the read waits (but ignore the last one that was the stop signal)
-            for (int i = 0; i < wait_count - 1; i++)
+            for (int i = 0; i < num_pseudoclocks_in_use; i++)
             {
-                // Check for timeout wait.
-                // This integer equals 2^32-1 - aka the biggest number and what happens when you subtract one from 0 (it wraps around)
-                // Note that we do not need to
-                if (waits[i] == 4294967295)
+                if (pseudoclock_configs[i].configured)
                 {
-                    waits[i] = 0; // decrement happens regardless of jump condition in PIO program.
+                    process_waits(&pseudoclock_configs[i], max_waits / num_pseudoclocks_in_use);
                 }
             }
         }
 
-        // Free the DMA channels
-        dma_channel_unclaim(instruction_dma_chan);
-        dma_channel_unclaim(waits_dma_chan);
-
-        // release the state machine
-        pio_sm_unclaim(pio, sm);
-
-        if (DEBUG)
+        // cleanup
+        for (int i = 0; i < num_pseudoclocks_in_use; i++)
         {
-            printf("Draining TX FIFO\n");
+            if (pseudoclock_configs[i].configured)
+            {
+                free_pseudoclock_pio_sm(&pseudoclock_configs[i]);
+            }
         }
-        // drain the tx FIFO to be safe
-        pio_sm_drain_tx_fifo(pio, sm);
 
         // Update the status
         if (status == ABORTING)
@@ -309,8 +505,6 @@ void core1_entry()
             status = STOPPED;
         }
 
-        // Tell main core we are done
-        multicore_fifo_push_blocking(1);
         if (DEBUG)
         {
             printf("Core1 loop ended\n");
@@ -362,23 +556,10 @@ void readline()
 void configure_gpio()
 {
     // initialise output pin. Needs to be done after state machine has run
-    gpio_init(OUT_PIN);
-    gpio_set_dir(OUT_PIN, GPIO_OUT);
-}
-
-void check_status()
-{
-    if (multicore_fifo_rvalid())
+    for (int i = 0; i < num_pseudoclocks_in_use; i++)
     {
-        if (DEBUG)
-        {
-            printf("Reading from core 1\n");
-        }
-        multicore_fifo_pop_blocking();
-        if (DEBUG)
-        {
-            printf("Core 1 read finished\n");
-        }
+        gpio_init(OUT_PINS[i]);
+        gpio_set_dir(OUT_PINS[i], GPIO_OUT);
     }
 }
 
@@ -409,18 +590,17 @@ void resus_callback(void)
     // If we were not expecting a resus, switch back to internal clock
     if (!resus_expected)
     {
-        // kill external clock pin
-        gpio_set_function((_src == 2 ? 22 : 20), GPIO_FUNC_NULL);
-
         // reinitialise pll
-        pll_init(pll_sys, 1, 1200, 6, 2);
-
+        pll_init(pll_sys, 1, 1200 * MHZ, 6, 2);
         // Configure internal clock
         clock_configure(clk_sys,
                         CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX,
                         CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
                         100 * MHZ,
                         100 * MHZ);
+
+        // kill external clock pin
+        gpio_set_function((_src == 2 ? 22 : 20), GPIO_FUNC_NULL);
 
         // update clock status
         clock_status = INTERNAL;
@@ -463,11 +643,7 @@ void resus_callback(void)
 
 void loop()
 {
-    // fgets(readstring, 255, stdin);
     readline();
-
-    // Check if the state machine has sent us new info
-    check_status();
 
     if (strncmp(readstring, "status", 6) == 0)
     {
@@ -500,7 +676,10 @@ void loop()
             // and prevent it from changing the output pin state erroneously as we drain the fifo
             status = ABORT_REQUESTED;
             configure_gpio();
-            gpio_put(OUT_PIN, 0);
+            for (int i = 0; i < num_pseudoclocks_in_use; i++)
+            {
+                gpio_put(OUT_PINS[i], 0);
+            }
             // Should be done!
             printf("ok\n");
         }
@@ -510,47 +689,105 @@ void loop()
     {
         printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0 or 5 (stopped or aborted).\n", readstring);
     }
-    else if (strncmp(readstring, "setinpin", 8) == 0)
+    // Set number of pseudoclocks
+    else if (strncmp(readstring, "setnumpseudoclocks", 17) == 0)
     {
-        unsigned int pin_no;
-        int parsed = sscanf(readstring, "%*s %u", &pin_no);
+        unsigned int num_pseudoclocks;
+        int parsed = sscanf(readstring, "%*s %u %u", &num_pseudoclocks);
         if (parsed < 1)
         {
             printf("invalid request\n");
         }
-        else if (pin_no == OUT_PIN)
+        else if (num_pseudoclocks < 1 || num_pseudoclocks > 4)
         {
-            printf("IN pin cannot be the same as the OUT pin");
+            printf("The number of pseudoclocks must be between 1 and 4 (inclusive)\n");
+        }
+        else
+        {
+            // TODO: be cleverer here and rearrange instructions
+            // rearrange_instructions(num_pseudoclocks_in_use, num_pseudoclocks);
+
+            // reset waits
+            for (int i = 0; i < max_waits + 4; i++)
+            {
+                waits[i] = 0;
+            }
+            // reset instructions
+            for (int i = 0; i < max_instructions * 2 + 8; i++)
+            {
+                instructions[i] = 0;
+            }
+            num_pseudoclocks_in_use = num_pseudoclocks;
+            printf("ok\n");
+        }
+    }
+    else if (strncmp(readstring, "setinpin", 8) == 0)
+    {
+        unsigned int pin_no;
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &pin_no);
+        if (parsed < 2)
+        {
+            printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+        }
+        else if (pin_no == OUT_PINS[0] || pin_no == OUT_PINS[1] || pin_no == OUT_PINS[2] || pin_no == OUT_PINS[3])
+        {
+            printf("IN pin cannot be the same as one of the OUT pins\n");
         }
         else if (pin_no < 0 || pin_no > 19)
         {
             printf("IN pin must be between 0 and 19 (inclusive)\n");
         }
+        else if (pin_no == IN_PINS[pseudoclock])
+        {
+            printf("ok\n");
+        }
+        else if (pin_no == IN_PINS[0] || pin_no == IN_PINS[1] || pin_no == IN_PINS[2] || pin_no == IN_PINS[3])
+        {
+            printf("IN pin cannot be the same as one of the other IN pins\n");
+        }
         else
         {
-            IN_PIN = pin_no;
+            IN_PINS[pseudoclock] = pin_no;
             printf("ok\n");
         }
     }
     else if (strncmp(readstring, "setoutpin", 9) == 0)
     {
         unsigned int pin_no;
-        int parsed = sscanf(readstring, "%*s %u", &pin_no);
-        if (parsed < 1)
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &pin_no);
+        if (parsed < 2)
         {
             printf("invalid request\n");
         }
-        else if (pin_no == IN_PIN)
+        else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("OUT pin cannot be the same as the IN pin");
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+        }
+        else if (pin_no == IN_PINS[0] || pin_no == IN_PINS[1] || pin_no == IN_PINS[2] || pin_no == IN_PINS[3])
+        {
+            printf("OUT pin cannot be the same as one of the IN pins\n");
         }
         else if (pin_no != 25 && (pin_no < 0 || pin_no > 19))
         {
             printf("OUT pin must be between 0 and 19 (inclusive) or 25 (LED for debugging)\n");
         }
+        else if (pin_no == OUT_PINS[pseudoclock])
+        {
+            printf("ok\n");
+        }
+        else if (pin_no == OUT_PINS[0] || pin_no == OUT_PINS[1] || pin_no == OUT_PINS[2] || pin_no == OUT_PINS[3])
+        {
+            printf("OUT pin cannot be the same as one of the other OUT pins\n");
+        }
         else
         {
-            OUT_PIN = pin_no;
+            OUT_PINS[pseudoclock] = pin_no;
             printf("ok\n");
         }
     }
@@ -611,36 +848,29 @@ void loop()
                 // reset seen resus flag
                 resus_complete = false;
                 resus_expected = true;
-
-                if (old_src > 0)
-                {
-                    // cancel clock input on this pin to trigger resus (and thus reconfigure)
-                    gpio_set_function((old_src == 2 ? 22 : 20), GPIO_FUNC_NULL);
-                }
-                else
-                {
-                    // Break PLL to trigger resus (and thus reconfigure)
-                    pll_deinit(pll_sys);
-                }
-
-                // Wait for resus to complete
-                while (!resus_complete)
-                    ;
+                resus_callback();
                 resus_expected = false;
 
                 printf("ok\n");
             }
         }
     }
+    // TODO: update this to support pseudoclock selection
     else if (strncmp(readstring, "getwait", 7) == 0)
     {
         unsigned int addr;
-        int parsed = sscanf(readstring, "%*s %u", &addr);
-        if (parsed < 1)
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &addr);
+        int waits_per_pseudoclock = (max_waits / num_pseudoclocks_in_use) + 1;
+        if (parsed < 2)
         {
             printf("invalid request\n");
         }
-        else if (addr >= max_waits)
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+        }
+        else if (addr >= waits_per_pseudoclock)
         {
             printf("invalid address\n");
         }
@@ -651,38 +881,51 @@ void loop()
             // wait was 6 clock ticks long.
             //
             // We multiply by two here to counteract the divide by two when storing (see below)
-            printf("%u\n", waits[addr] * 2);
+            printf("%u\n", waits[pseudoclock * waits_per_pseudoclock + addr] * 2);
         }
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
     {
         // Force output low in case it was left high
-        gpio_put(OUT_PIN, 0);
+        for (int i = 0; i < num_pseudoclocks_in_use; i++)
+        {
+            gpio_put(OUT_PINS[i], 0);
+        }
         // Notify state machine to start
         multicore_fifo_push_blocking(1);
         // update status
         status = TRANSITION_TO_RUNNING;
         printf("ok\n");
     }
-    else if ((strncmp(readstring, "start", 5) == 0)) // || (strcmp(readstring, "") == 0))
+    else if ((strncmp(readstring, "start", 5) == 0))
     {
         // Force output low in case it was left high
-        gpio_put(OUT_PIN, 0);
+        for (int i = 0; i < num_pseudoclocks_in_use; i++)
+        {
+            gpio_put(OUT_PINS[i], 0);
+        }
         // Notify state machine to start
         multicore_fifo_push_blocking(0);
         // update status
         status = TRANSITION_TO_RUNNING;
         printf("ok\n");
     }
+    // TODO: update this to support pseudoclock selection
     else if (strncmp(readstring, "set ", 4) == 0)
     {
         unsigned int addr;
         unsigned int half_period;
         unsigned int reps;
-        int parsed = sscanf(readstring, "%*s %u %u %u", &addr, &half_period, &reps);
-        if (parsed < 3)
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u %u %u %u", &pseudoclock, &addr, &half_period, &reps);
+        int address_offset = pseudoclock * (max_instructions * 2 / num_pseudoclocks_in_use + 2);
+        if (parsed < 4)
         {
             printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
         }
         else if (addr >= max_instructions)
         {
@@ -691,19 +934,22 @@ void loop()
         else if (reps == 0)
         {
             // This indicates either a stop or a wait instruction
-            instructions[2 * addr] = 0;
+            instructions[address_offset + addr * 2] = 0;
             if (half_period == 0)
             {
                 // It's a stop instruction
-                instructions[2 * addr + 1] = 0;
+                instructions[address_offset + addr * 2 + 1] = 0;
                 printf("ok\n");
             }
-            else if (half_period >= 2)
+            else if (half_period >= 5)
             {
                 // It's a wait instruction:
                 // The half period contains the number of ASM wait loops to wait for before continuing.
+                // There are 3 clock cycles of delay between ending the previous instruction and being 
+                // ready to detect the trigger to end the wait. So we also subtract these off to ensure
+                // the timeout is accurate.
                 // The wait loop conatins two ASM instructions, so we divide by 2 here.
-                instructions[2 * addr + 1] = half_period / 2;
+                instructions[address_offset + addr * 2 + 1] = (half_period - 3) / 2;
                 printf("ok\n");
             }
             else
@@ -721,18 +967,24 @@ void loop()
         }
         else
         {
-            instructions[2 * addr] = reps;
-            instructions[2 * addr + 1] = half_period - non_loop_path_length;
+            instructions[address_offset + addr * 2] = reps;
+            instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
             printf("ok\n");
         }
     }
     else if (strncmp(readstring, "get ", 4) == 0)
     {
         unsigned int addr;
-        int parsed = sscanf(readstring, "%*s %u", &addr);
-        if (parsed < 1)
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &addr);
+        int address_offset = pseudoclock * (max_instructions * 2 / num_pseudoclocks_in_use + 2);
+        if (parsed < 2)
         {
             printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
         }
         else if (addr >= max_instructions)
         {
@@ -740,42 +992,84 @@ void loop()
         }
         else
         {
-            uint half_period = instructions[2 * addr + 1];
-            uint reps = instructions[2 * addr];
+            uint half_period = instructions[address_offset + addr * 2 + 1];
+            uint reps = instructions[address_offset + addr * 2];
             if (reps != 0)
             {
                 half_period += non_loop_path_length;
             }
             else
             {
+                // account for wait loop being 2 ASM instructions long
                 half_period = half_period * 2;
+                // If not a stop instruction
+                if (half_period != 0)
+                {
+                    // acount for 3 ASM instructions between end of previous pseudoclock instruction and start of wait loop
+                    half_period += 3;
+                }
             }
             printf("%u %u\n", half_period, reps);
         }
     }
     else if (strncmp(readstring, "go high", 7) == 0)
     {
-        configure_gpio();
-        gpio_put(OUT_PIN, 1);
-        printf("ok\n");
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %*s %u", &pseudoclock);
+        if (parsed < 1)
+        {
+            printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+        }
+        else
+        {
+            configure_gpio();
+            gpio_put(OUT_PINS[pseudoclock], 1);
+            printf("ok\n");
+        }
     }
     else if (strncmp(readstring, "go low", 6) == 0)
     {
-        configure_gpio();
-        gpio_put(OUT_PIN, 0);
-        printf("ok\n");
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %*s %u", &pseudoclock);
+        if (parsed < 1)
+        {
+            printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+        }
+        else
+        {
+            configure_gpio();
+            gpio_put(OUT_PINS[pseudoclock], 0);
+            printf("ok\n");
+        }
     }
     else
     {
         printf("invalid request: %s\n", readstring);
     }
-
-    //memset(readstring, 0, 256 * (sizeof readstring[0]));
 }
 
 int main()
 {
     DEBUG = 0;
+    // Initial config for output pins
+    OUT_PINS[0] = 9;
+    OUT_PINS[1] = 11;
+    OUT_PINS[2] = 13;
+    OUT_PINS[3] = 15;
+    IN_PINS[0] = 0;
+    IN_PINS[1] = 2;
+    IN_PINS[2] = 4;
+    IN_PINS[3] = 6;
+    // start with only one in use
+    num_pseudoclocks_in_use = 1;
 
     // configure resus callback that will reconfigure the clock for us
     // either when we change clock settings or when the clock fails (if external)
@@ -790,10 +1084,7 @@ int main()
     // reset seen resus flag
     resus_complete = false;
     resus_expected = true;
-    pll_deinit(pll_sys);
-    // Wait for resus to complete
-    while (!resus_complete)
-        ;
+    resus_callback();
     resus_expected = false;
 
     // Temp output 48MHZ clock for debug
