@@ -111,9 +111,7 @@ To use a 50 MHz external reference (on GPIO 20) you would send:
 setclock 1 50000000 0 0 0
 ```
 
-Note: When configured to use an external reference, the board will lock up if the reference is interrupted. 
-In this case you will need to power cycle the Pico. 
-See [issue #1](https://github.com/labscript-suite/PrawnBlaster/issues/1).
+Note: When configured to use an external reference, the board will revert to the internal clock (at 100 MHz) if the external reference is interrupted.
 
 
 ## FAQ:
