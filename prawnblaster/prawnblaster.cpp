@@ -43,8 +43,8 @@ unsigned int instructions[60008];
 unsigned int waits[404];
 
 char readstring[256] = "";
-// This contains the number of clock cycles for a half period, which is currently 6 (there are 6 ASM instructions)
-const unsigned int non_loop_path_length = 6;
+// This contains the number of clock cycles for a half period, which is currently 5 (there are 5 ASM instructions)
+const unsigned int non_loop_path_length = 5;
 
 uint OUT_PINS[4]; // = 15;
 uint IN_PINS[4];  //  = 0;

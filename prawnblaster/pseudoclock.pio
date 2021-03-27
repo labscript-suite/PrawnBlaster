@@ -18,7 +18,6 @@
 
 .program pseudoclock
 .side_set 1 opt
-.wrap_target
 
 ; Note: We currently have indefinite waits added due to a quirk of how we jump from a wait (should a wait be followed by another wait)
 ;       However, this could be removed if we change the jump to "start" to a jump to "newinst". Then we would not have indefinite waits
@@ -34,21 +33,22 @@ start:
     mov y, osr                          ; Move reps into Y
     jmp !y indefinitewait               ; If reps is 0 for the first instruction, jump to wait/end block. This should maybe be updated to
                                         ; jump to indefinitewait instead if we can fit that block of code in...
-    jmp y-- shortstart side 1           ; go high, and decrement y (since it only decrements post jump check). This will always jump
-                                        ; since we just checked if it was 0 in the previous jump.
+    jmp shortstart
 
 indefinitewait:
     pull block                          ; read out half period for this instruction - but ignore it! We do this before waiting
                                         ; so that we don't risk draining the FIFO. This is also necessary for the case where we have
                                         ; two waits in a row (an indefinite wait) as we might end up here mid experiment!
-    wait 1 pin 0            [2]         ; indefinitely wait for initial trigger (usually skipped by above jump). Delay by 5 cycles after condition reached
+    wait 1 pin 0            [2]         ; indefinitely wait for initial trigger (usually skipped by above jump). Delay by 2 cycles after condition reached
                                         ; so that the length of this path matches the length of the resume from wait path
     jmp start                           ; Must load in new value for reps and load in half period
 
 ; This allows us to skip the above mov/wait check if we already did it as part of "newinst" below
 shortstart:
-    nop                     [1]         ; Some nops to balance out the paths and also ensure the FIFO has loaded data
-    ;nop
+.wrap_target
+    jmp y-- shortstart2 side 1          ; go high, and decrement y (since it only decrements post jump check). This will always jump
+                                        ; since we just checked if it was 0 in the previous jump.
+shortstart2:
     
     pull block                          ; pull half period into OSR
 ; This label skips loading in a new half period when we are just doing another rep of the previous half period
@@ -60,10 +60,10 @@ highloop:
     ;
     ; Reload half period into X and drop to low
     ;
-    mov x, osr      side 0
+    mov x, osr
 lowloop:
     
-    jmp x-- lowloop                     ; Jump if not 0. Decrement half period regardless. This loops for X clock cycles
+    jmp x-- lowloop      side 0         ; Jump if not 0. Decrement half period regardless. This loops for X clock cycles
     
     jmp y-- continuereps                ; Jump to normal path if there are still more reps to do (decrement regardless)
                                         ; If we are out of reps, do the unusual path for a new instruction
@@ -71,8 +71,7 @@ newinst:
     pull block                          ; Pull next reps into OSR
     mov y, osr                          ; and transfer to Y
     jmp !y waitstart                    ; If reps is 0, jump to wait/end block
-    jmp y-- shortstart  side 1          ; else go high, decrement y (since it only decrements post jump check so we need to subtract 1 off the
-                                        ; reps count, but only after the waitstart jump check ) and jump to shortstart
+    .wrap                               ; else wrap
 
 ;
 ; Normal path when we still have more reps to do
@@ -82,9 +81,7 @@ continuereps:
     ;nop
     ;nop
    
-    nop             side 1  [2]         ; Go high and jump to point where we reload the half period (after padding out the path length to match the
-    ;nop                                ; length of the other path that also has to load the reps and check for a wait
-    ;nop
+    nop             side 1              ; Go high and jump to point where we reload the half period
     jmp mainloop
 
 ;
@@ -116,7 +113,6 @@ waitdone:
 stop:
     mov isr, x                           ; push something to the FIFO so we know we are done
     push block                           ; Since this is not time critical, we can block here getting us an extra wait length stored in the FIFO
-    .wrap                                ; wrap to beginning and block on IRQ
 
 
 % c-sdk {
