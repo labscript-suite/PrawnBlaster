@@ -429,18 +429,8 @@ void core1_entry()
             // update the status
             set_status(RUNNING);
 
-            unsigned int current_pio_ctrl_val = pio0->ctrl;
-            for (int i = 0; i < num_pseudoclocks_in_use; i++)
-            {
-                if (pseudoclock_configs[i].configured)
-                {
-                    current_pio_ctrl_val = (current_pio_ctrl_val & ~(1u << pseudoclock_configs[i].sm)) | (!!true << pseudoclock_configs[i].sm);
-                }
-                // pio_sm_set_enabled(pseudoclock_configs[i].pio, pseudoclock_configs[i].sm, true);
-            }
-            //
-            // start the PIOs together
-            pio0->ctrl = current_pio_ctrl_val;
+            // Start the PIO SMs together as well as synchronising the clocks
+            pio_enable_sm_mask_in_sync(pio0, ((1<<num_pseudoclocks_in_use)-1));
 
             // Wait for DMA transfers to finish
             for (int i = 0; i < num_pseudoclocks_in_use; i++)
