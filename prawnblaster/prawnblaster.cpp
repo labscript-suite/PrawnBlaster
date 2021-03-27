@@ -260,6 +260,12 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
 
 void process_waits(pseudoclock_config *config, int max_waits_per_pseudoclock)
 {
+    // Note: We are not doing this right now because I want to distinguish
+    // between triggering just as the timeout expires (so still jumping on
+    // pin high) and the counter running out (and the assembly code falling
+    // into waitdone without an external trigger). This is because the
+    // latter is technically 1 clock cycle longer than the former, and so 
+    // the counter will naturally demonstrate that.
 
     // Now process the read waits (but ignore the last one that was the stop signal)
     int max_waits = (max_waits_per_pseudoclock + 1);
@@ -477,13 +483,20 @@ void core1_entry()
 
             status = TRANSITION_TO_STOP;
 
-            for (int i = 0; i < num_pseudoclocks_in_use; i++)
-            {
-                if (pseudoclock_configs[i].configured)
-                {
-                    process_waits(&pseudoclock_configs[i], max_waits / num_pseudoclocks_in_use);
-                }
-            }
+            // Note: We are not doing this right now because I want to distinguish
+            // between triggering just as the timeout expires (so still jumping on
+            // pin high) and the counter running out (and the assembly code falling
+            // into waitdone without an external trigger). This is because the
+            // latter is technically 1 clock cycle longer than the former, and so 
+            // the counter will naturally demonstrate that.
+            //
+            // for (int i = 0; i < num_pseudoclocks_in_use; i++)
+            // {
+            //     if (pseudoclock_configs[i].configured)
+            //     {
+            //         process_waits(&pseudoclock_configs[i], max_waits / num_pseudoclocks_in_use);
+            //     }
+            // }
         }
 
         // cleanup
@@ -876,12 +889,19 @@ void loop()
         }
         else
         {
-            // Note that these are not the lengths of the waits, but how many base (system) clock ticks were left
-            // before timeout. 0 = timeout. a wait with a timeout of 8, and a value reported here as 2, means the
-            // wait was 6 clock ticks long.
-            //
-            // We multiply by two here to counteract the divide by two when storing (see below)
-            printf("%u\n", waits[pseudoclock * waits_per_pseudoclock + addr] * 2);
+            unsigned int wait_remaining = waits[pseudoclock * waits_per_pseudoclock + addr];
+            // don't multiply the -1 wraparound of the unsigned int - this means a
+            // wait timed out.
+            if (wait_remaining != 4294967295)
+            {
+                // Note that these are not the lengths of the waits, but how many base (system) clock ticks were left
+                // before timeout. 0 = timeout. a wait with a timeout of 8, and a value reported here as 2, means the
+                // wait was 6 clock ticks long.
+                //
+                // We multiply by two here to counteract the divide by two when storing (see below)
+                wait_remaining *= 2;
+            }
+            printf("%u\n", wait_remaining);
         }
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
@@ -941,15 +961,15 @@ void loop()
                 instructions[address_offset + addr * 2 + 1] = 0;
                 printf("ok\n");
             }
-            else if (half_period >= 5)
+            else if (half_period >= 6)
             {
                 // It's a wait instruction:
                 // The half period contains the number of ASM wait loops to wait for before continuing.
-                // There are 3 clock cycles of delay between ending the previous instruction and being 
+                // There are 4 clock cycles of delay between ending the previous instruction and being 
                 // ready to detect the trigger to end the wait. So we also subtract these off to ensure
                 // the timeout is accurate.
                 // The wait loop conatins two ASM instructions, so we divide by 2 here.
-                instructions[address_offset + addr * 2 + 1] = (half_period - 3) / 2;
+                instructions[address_offset + addr * 2 + 1] = (half_period - 4) / 2;
                 printf("ok\n");
             }
             else
