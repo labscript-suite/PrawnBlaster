@@ -46,13 +46,13 @@ char readstring[256] = "";
 // This contains the number of clock cycles for a half period, which is currently 5 (there are 5 ASM instructions)
 const unsigned int non_loop_path_length = 5;
 
-uint OUT_PINS[4]; // = 15;
-uint IN_PINS[4];  //  = 0;
+uint OUT_PINS[4];
+uint IN_PINS[4];
 
 int num_pseudoclocks_in_use;
 
-// PIO pio;
-// uint sm;
+// Mutex for status
+static mutex_t status_mutex;
 
 // STATUS flag
 int status;
@@ -69,15 +69,6 @@ int clock_status;
 #define INTERNAL 0
 #define EXTERNAL 1
 
-// Frequency variables
-volatile bool resus_complete;
-volatile bool resus_expected;
-unsigned int _src;  // 0 = internal, 1=GPIO pin 20, 2=GPIO pin 22
-unsigned int _freq; // in Hz
-unsigned int _vcofreq;
-unsigned int _div1;
-unsigned int _div2;
-
 struct pseudoclock_config
 {
     PIO pio;
@@ -90,6 +81,23 @@ struct pseudoclock_config
     int waits_to_send;
     bool configured;
 };
+
+
+// Thread safe functions for getting/setting status
+int get_status()
+{
+    mutex_enter_blocking(&status_mutex);
+    int status_copy = status;
+    mutex_exit(&status_mutex);
+    return status_copy;
+}
+
+void set_status(int new_status)
+{
+    mutex_enter_blocking(&status_mutex);
+    status = new_status;
+    mutex_exit(&status_mutex);
+}
 
 bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, uint32_t hwstart, int max_instructions_per_pseudoclock, int max_waits_per_pseudoclock)
 {
@@ -284,7 +292,7 @@ void process_waits(pseudoclock_config *config, int max_waits_per_pseudoclock)
 void free_pseudoclock_pio_sm(pseudoclock_config *config)
 {
 
-    if (status == ABORTING)
+    if (get_status() == ABORTING)
     {
         // Abort DMA transfer if we're aborting the shot
         dma_channel_abort(config->instructions_dma_channel);
@@ -399,7 +407,7 @@ void core1_entry()
 
         if (!success)
         {
-            status = ABORTING;
+            set_status(ABORTING);
             for (int i = 0; i < num_pseudoclocks_in_use; i++)
             {
                 if (pseudoclock_configs[i].configured)
@@ -407,7 +415,7 @@ void core1_entry()
                     free_pseudoclock_pio_sm(&pseudoclock_configs[i]);
                 }
             }
-            status = ABORTED;
+            set_status(ABORTED);
             if (DEBUG)
             {
                 printf("Core1 loop ended\n");
@@ -416,10 +424,10 @@ void core1_entry()
         }
 
         // Check that this shot has not been aborted already
-        if (status == TRANSITION_TO_RUNNING)
+        if (get_status() == TRANSITION_TO_RUNNING)
         {
             // update the status
-            status = RUNNING;
+            set_status(RUNNING);
 
             unsigned int current_pio_ctrl_val = pio0->ctrl;
             for (int i = 0; i < num_pseudoclocks_in_use; i++)
@@ -443,7 +451,7 @@ void core1_entry()
                     {
                         printf("Tight loop for pseudoclock %d beginning\n", i);
                     }
-                    while (dma_channel_is_busy(pseudoclock_configs[i].instructions_dma_channel) && status != ABORT_REQUESTED)
+                    while (dma_channel_is_busy(pseudoclock_configs[i].instructions_dma_channel) && get_status() != ABORT_REQUESTED)
                     {
                         tight_loop_contents();
                     }
@@ -451,7 +459,7 @@ void core1_entry()
                     {
                         printf("Tight loop for pseudoclock waits %d beginning\n", i);
                     }
-                    while (dma_channel_is_busy(pseudoclock_configs[i].waits_dma_channel) && status != ABORT_REQUESTED)
+                    while (dma_channel_is_busy(pseudoclock_configs[i].waits_dma_channel) && get_status() != ABORT_REQUESTED)
                     {
                         tight_loop_contents();
                     }
@@ -464,14 +472,14 @@ void core1_entry()
         }
 
         // If we aborted, update the status to acknowledge the abort
-        if (status == ABORT_REQUESTED)
+        if (get_status() == ABORT_REQUESTED)
         {
             if (DEBUG)
             {
                 printf("Aborting pseudoclock program\n");
             }
 
-            status = ABORTING;
+            set_status(ABORTING);
         }
         // otherwise put in the transition to stop state
         else
@@ -481,7 +489,7 @@ void core1_entry()
                 printf("Pseudoclock program complete\n");
             }
 
-            status = TRANSITION_TO_STOP;
+            set_status(TRANSITION_TO_STOP);
 
             // Note: We are not doing this right now because I want to distinguish
             // between triggering just as the timeout expires (so still jumping on
@@ -509,13 +517,13 @@ void core1_entry()
         }
 
         // Update the status
-        if (status == ABORTING)
+        if (get_status() == ABORTING)
         {
-            status = ABORTED;
+            set_status(ABORTED);
         }
         else
         {
-            status = STOPPED;
+            set_status(STOPPED);
         }
 
         if (DEBUG)
@@ -600,46 +608,15 @@ void measure_freqs(void)
 
 void resus_callback(void)
 {
-    // If we were not expecting a resus, switch back to internal clock
-    if (!resus_expected)
-    {
-        // reinitialise pll
-        pll_init(pll_sys, 1, 1200 * MHZ, 6, 2);
-        // Configure internal clock
-        clock_configure(clk_sys,
-                        CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX,
-                        CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
-                        100 * MHZ,
-                        100 * MHZ);
+    // Switch back to internal clock with the dfeault frequency
+    set_sys_clock_khz(100 * MHZ / 1000, false);
 
-        // kill external clock pin
-        gpio_set_function((_src == 2 ? 22 : 20), GPIO_FUNC_NULL);
+    // kill external clock pins
+    gpio_set_function(20, GPIO_FUNC_NULL);
+    gpio_set_function(22, GPIO_FUNC_NULL);
 
-        // update clock status
-        clock_status = INTERNAL;
-    }
-    else if (_src > 0)
-    {
-        clock_configure_gpin(clk_sys, (_src == 2 ? 22 : 20), _freq, _freq);
-        // update clock status
-        clock_status = EXTERNAL;
-    }
-    else
-    {
-        // Reconfigure PLL sys back to the default state of 1500 / 6 / 2 = 125MHz
-        // pll_init(pll_sys, 1, 1200 * MHZ, 6, 2);
-        pll_init(pll_sys, 1, _vcofreq, _div1, _div2);
-
-        // CLK SYS = PLL SYS (125MHz) / 1 = 125MHz
-        clock_configure(clk_sys,
-                        CLOCKS_CLK_SYS_CTRL_SRC_VALUE_CLKSRC_CLK_SYS_AUX,
-                        CLOCKS_CLK_SYS_CTRL_AUXSRC_VALUE_CLKSRC_PLL_SYS,
-                        _freq,
-                        _freq);
-
-        // update clock status
-        clock_status = INTERNAL;
-    }
+    // update clock status
+    clock_status = INTERNAL;
 
     // Reconfigure uart as clocks have changed
     stdio_init_all();
@@ -650,17 +627,15 @@ void resus_callback(void)
 
     // Wait for uart output to finish
     uart_default_tx_wait_blocking();
-
-    resus_complete = true;
 }
 
 void loop()
 {
     readline();
-
+    int local_status = get_status();
     if (strncmp(readstring, "status", 6) == 0)
     {
-        printf("run-status:%d clock-status:%d\n", status, clock_status);
+        printf("run-status:%d clock-status:%d\n", local_status, clock_status);
     }
     else if (strncmp(readstring, "debug on", 8) == 0)
     {
@@ -679,7 +654,7 @@ void loop()
     }
     else if (strncmp(readstring, "abort", 5) == 0)
     {
-        if (status != RUNNING && status != TRANSITION_TO_RUNNING)
+        if (local_status != RUNNING && local_status != TRANSITION_TO_RUNNING)
         {
             printf("Can only abort when status is 1 or 2 (transitioning to running or running)");
         }
@@ -687,7 +662,7 @@ void loop()
         {
             // force output low first, this should take control from the state machine
             // and prevent it from changing the output pin state erroneously as we drain the fifo
-            status = ABORT_REQUESTED;
+            set_status(ABORT_REQUESTED);
             configure_gpio();
             for (int i = 0; i < num_pseudoclocks_in_use; i++)
             {
@@ -698,7 +673,7 @@ void loop()
         }
     }
     // Prevent manual mode commands from running during buffered execution
-    else if (status != ABORTED && status != STOPPED)
+    else if (local_status != ABORTED && local_status != STOPPED)
     {
         printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0 or 5 (stopped or aborted).\n", readstring);
     }
@@ -808,12 +783,8 @@ void loop()
     {
         unsigned int src;     // 0 = internal, 1=GPIO pin 20, 2=GPIO pin 22
         unsigned int freq;    // in Hz (up to 133 MHz)
-        unsigned int vcofreq; // in Hz (between 400MHz and 1600MHz)
-        unsigned int div1;    // First PLL divider (between 1-7)
-        unsigned int div2;    // Second PLL divider (between 1-7)
-                              // Note: freq should equal vcofreq / div1 / div2
-        int parsed = sscanf(readstring, "%*s %u %u %u %u %u", &src, &freq, &vcofreq, &div1, &div2);
-        if (parsed < 5)
+        int parsed = sscanf(readstring, "%*s %u %u", &src, &freq);
+        if (parsed < 2)
         {
             printf("invalid request\n");
         }
@@ -821,7 +792,7 @@ void loop()
         {
             if (DEBUG)
             {
-                printf("Got request mode=%u, freq=%u MHz, vco_freq=%u MHz, div1=%u, div2=%u\n", src, freq / MHZ, vcofreq / MHZ, div1, div2);
+                printf("Got request mode=%u, freq=%u MHz\n", src, freq / MHZ);
             }
             if (src > 2)
             {
@@ -835,36 +806,27 @@ void loop()
                     printf("Invalid clock frequency specified\n");
                     return;
                 }
-                else if (src == 0 && (vcofreq < (400 * MHZ) || vcofreq > (1600 * MHZ)))
-                {
-                    printf("Invalid VCO frequency specified\n");
-                    return;
-                }
-                else if (src == 0 && (div1 < 1 || div1 > 7))
-                {
-                    printf("Invalid POSTDIV1 PLL divider specified\n");
-                    return;
-                }
-                else if (src == 0 && (div2 < 1 || div2 > 7))
-                {
-                    printf("Invalid POSTDIV2 PLL divider specified\n");
-                    return;
-                }
 
-                unsigned int old_src = _src;
-                _src = src;
-                _freq = freq;
-                _vcofreq = vcofreq;
-                _div1 = div1;
-                _div2 = div2;
-
-                // reset seen resus flag
-                resus_complete = false;
-                resus_expected = true;
-                resus_callback();
-                resus_expected = false;
-
-                printf("ok\n");
+                // Set new clock frequency
+                if (src == 0)
+                {
+                    if (set_sys_clock_khz(freq / 1000, false))
+                    {
+                        printf("ok\n");
+                        clock_status = INTERNAL;
+                    }
+                    else
+                    {
+                        printf("Failure. Cannot exactly achieve that clock frequency.");
+                    }
+                }
+                else
+                {
+                    clock_configure_gpin(clk_sys, (src == 2 ? 22 : 20), freq, freq);
+                    // update clock status
+                    clock_status = EXTERNAL;
+                    printf("ok\n");
+                }
             }
         }
     }
@@ -914,7 +876,7 @@ void loop()
         // Notify state machine to start
         multicore_fifo_push_blocking(1);
         // update status
-        status = TRANSITION_TO_RUNNING;
+        set_status(TRANSITION_TO_RUNNING);
         printf("ok\n");
     }
     else if ((strncmp(readstring, "start", 5) == 0))
@@ -927,7 +889,7 @@ void loop()
         // Notify state machine to start
         multicore_fifo_push_blocking(0);
         // update status
-        status = TRANSITION_TO_RUNNING;
+        set_status(TRANSITION_TO_RUNNING);
         printf("ok\n");
     }
     // TODO: update this to support pseudoclock selection
@@ -1091,21 +1053,15 @@ int main()
     // start with only one in use
     num_pseudoclocks_in_use = 1;
 
+    // initialise the status mutex
+    mutex_init(&status_mutex);
+
     // configure resus callback that will reconfigure the clock for us
     // either when we change clock settings or when the clock fails (if external)
     clocks_enable_resus(&resus_callback);
 
     // initial clock configuration
-    _src = 0;
-    _freq = 100 * MHZ;
-    _vcofreq = 1200 * MHZ;
-    _div1 = 6;
-    _div2 = 2;
-    // reset seen resus flag
-    resus_complete = false;
-    resus_expected = true;
-    resus_callback();
-    resus_expected = false;
+    set_sys_clock_khz(100 * MHZ / 1000, true);
 
     // Temp output 48MHZ clock for debug
     clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_USB, 1);

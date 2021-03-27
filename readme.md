@@ -70,7 +70,7 @@ Note: the commands are only read if terminated with `\r\n`.
 * `status`: Responds with a string containing the PrawnBlaster status in the format `run-status:<int> clock-status:<int>` where the `run-status` integer is `0=manual-mode, 1=transitioning to buffered-execution, 2=buffered-execution, 3=abort requested, 4=currently aborting buffered execution, 5=last buffered-execution aborted, 6=transitioning to manual-mode`. `clock-status` is either 0 (for internal clock) or 1 (for external clock).
 * `getfreqs`: Responds with a multi-line string containing the current operating frequencies of various clocks (you will be most interested in `pll_sys` and `clk_sys`). Multiline string ends with `ok\n`.
 * `abort`: Prematurely ends buffered-execution.
-* `setclock <mode:int> <freq:int> <vcofreq:int> <plldiv1:int> <plldiv2:int>`: Reconfigures the internal clock. See below for more details.
+* `setclock <mode:int> <freq:int>`: Reconfigures the clock source. See below for more details.
 * `setnumpseudoclocks <number:int>`: Set the number of independent pseudoclocks. Must be between 1 and 4 (inclusive). Default at boot is 1. Configuring a number higher than one reduces the number of available instructions per pseudoclock by that factor. E.g. 2 pseudoclocks have 30,000 instructions each. 3 pseudoclocks have 20,000 instructions each. 4 pseudoclocks have 15,000 instructions each.
 * `getwait <pseudoclock:int> <wait:int>`: Returns an integer related to the length of wait number `wait` for the pseudoclock `pseudoclock` (pseudoclock is zero indexed). `wait` starts at `0`. The length of the wait (in seconds) can be calculated by subtracting the returned value from the relevant wait timeout and dividing the result by the clock frequency (by default 100 MHz). A returned value of `4294967295` (`2^32-1`) means the wait timed out. There may be more waits available than were in your latest program. If you had `N` waits, query the first `N` values (starting from 0). Note that wait lengths and only accurate to +/- 1 clock cycle as the detection loop length is 2 clock cycles. Indefinite waits should report as `4294967295` (assuming that the trigger pulse length is sufficient, see the FAQ below).
 * `start`: Immediately triggers the execution of the instruction set.
@@ -85,30 +85,27 @@ Note: the commands are only read if terminated with `\r\n`.
 
 ## Reconfiguring the internal clock.
 The clock frequency (and even source) can be reconfigured at runtime (it is initially set to 100 MHz on every boot).
-To do this, you send the command `setclock <mode:int> <freq:int> <vcofreq:int> <plldiv1:int> <plldiv2:int>`, where the parameters are:
+To do this, you send the command `setclock <mode:int> <freq:int>`, where the parameters are:
 
 * mode: `0` means use the internal reference source and PLL. `1` means use an external source (bypassing the PLL) fed in on GPIO 20. `2` means use an external source (bypassing the PLL fed in on GPIO 22).
 * freq: The clock frequency, in Hz (max 133000000).
-* vcofreq: The clock frequency (in Hz) the internal VCO (in the PLL) should run at. Only relevant if `mode=0`. Must be between 400000000 and 1600000000. Must also satisfy the relationship `freq=vcofreq/plldiv1/plldiv2` (this is not internally verified).
-* plldiv1: The first PLL divider. Must be between 1 and 7 (inclusive). Should be greater than plldiv2 to reduce power usage.
-* plldiv2 The second PLL divider. Must be between 1 and 7 (inclusive). Should be lower than plldiv1 to reduce power usage.
 
 For example, to set the internal frequency to 125 MHz, you would send:
 
 ```
-setclock 0 125000000 1500000000 6 2
+setclock 0 125000000
 ```
 
 To set the internal frequency back to 100 MHz, you would send:
 
 ```
-setclock 0 100000000 1200000000 6 2
+setclock 0 100000000
 ```
 
 To use a 50 MHz external reference (on GPIO 20) you would send:
 
 ```
-setclock 1 50000000 0 0 0
+setclock 1 50000000
 ```
 
 Note: When configured to use an external reference, the board will revert to the internal clock (at 100 MHz) if the external reference is interrupted.
