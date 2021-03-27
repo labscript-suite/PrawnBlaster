@@ -22,7 +22,7 @@ In the case of the PrawnBlaster, you can program in a series of instructions con
 * Support for timeouts on those waits (with maximum length 42.9 seconds).
 * Ability to internally monitor the length of those waits and report them over the serial connection at the end of the instruction execution.
 * Support for indefinite waits until retrigger (Note: the PrawnBlaster will not report the length of indefinite waits).
-* Support for referencing to an external clock source to synchronise with other devices (may be limited to 50MHz - this has not yet been tested - which would double all of the timing specifications above).
+* Support for referencing to an external clock source to synchronise with other devices (officially limited to 50MHz on the pico but testing has shown it works up to 125MHz, see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
 
 Note 1: The half-period is the time a clock pulse stays high. All clock pulses produced by the PrawnBlaster have a 50-50 duty cycle.
 
@@ -62,7 +62,7 @@ python -m serial.tools.miniterm --eol=CRLF COM4 115200
 
 Note the baudrate of `152000` and the requirement that commands be terminated with `\r\n` (CRLF).
 
-**Communication during buffered execution should be fine (pending the results of testing detailed in [issue #4](https://github.com/labscript-suite/PrawnBlaster/issues/4)) as serial communication is handled by a separate core.**
+**Communication during buffered execution should be fine (pending the results of testing detailed in [issue #7](https://github.com/labscript-suite/PrawnBlaster/issues/7)) as serial communication is handled by a separate core.**
 
 ## Supported serial commands.
 Note: the commands are only read if terminated with `\r\n`.
@@ -113,6 +113,14 @@ setclock 1 50000000 0 0 0
 
 Note: When configured to use an external reference, the board will revert to the internal clock (at 100 MHz) if the external reference is interrupted.
 
+### External reference requirements
+If configured to use an external source (clock mode `1` or `2`, see above), the source must be a 0-3.3V CMOS signal at the frequency you wish to run at.
+This directly clocks the cores running the PrawnBlaster firmware, so minimum pulse lengths are directly related to the reference frequency.
+An external clock of 50MHz means a minimum half-period of `5/50MHz=100ns`.
+An external clock of 100MHz means a minimum half-period of `5/100MHz=50ns`.
+
+Note: Officially, the documentation for the Pico says external clock sources can only be up to 50MHz. We have successfully tested up to 125MHz (see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
+We recommend you personally verify the output of the PrawnBlaster is as expected if running from an external reference above 50MHz.
 
 ## FAQ:
 
