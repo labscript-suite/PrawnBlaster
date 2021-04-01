@@ -375,7 +375,7 @@ void free_pseudoclock_pio_sm(pseudoclock_config *config)
 void core1_entry()
 {
     // PIO initialisation
-    uint offset = pio_add_program(pio0, &pseudoclock_program);
+    uint offset = pio_add_program(pio1, &pseudoclock_program);
 
     // announce we are ready
     multicore_fifo_push_blocking(0);
@@ -390,7 +390,7 @@ void core1_entry()
         bool success = true;
         for (int i = 0; i < num_pseudoclocks_in_use; i++)
         {
-            pseudoclock_configs[i].pio = pio0;
+            pseudoclock_configs[i].pio = pio1;
             pseudoclock_configs[i].sm = i;
             pseudoclock_configs[i].OUT_PIN = OUT_PINS[i];
             pseudoclock_configs[i].IN_PIN = IN_PINS[i];
@@ -430,7 +430,7 @@ void core1_entry()
             set_status(RUNNING);
 
             // Start the PIO SMs together as well as synchronising the clocks
-            pio_enable_sm_mask_in_sync(pio0, ((1<<num_pseudoclocks_in_use)-1));
+            pio_enable_sm_mask_in_sync(pio1, ((1<<num_pseudoclocks_in_use)-1));
 
             // Wait for DMA transfers to finish
             for (int i = 0; i < num_pseudoclocks_in_use; i++)
