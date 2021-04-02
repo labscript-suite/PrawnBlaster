@@ -113,7 +113,8 @@ waitdone:
 stop:
     mov isr, x                           ; push something to the FIFO so we know we are done
     push block                           ; Since this is not time critical, we can block here getting us an extra wait length stored in the FIFO
-
+end:
+    jmp end                              ; end forever
 
 % c-sdk {
 #include "hardware/gpio.h"
@@ -130,6 +131,8 @@ static inline void pio_pseudoclock_init(PIO pio, uint sm, uint offset, uint out_
     pio_gpio_init(pio, in_pin);
     sm_config_set_jmp_pin(&c, in_pin); 
     sm_config_set_in_pins(&c, in_pin);
+
+    hw_set_bits(&pio->input_sync_bypass, PIO_INPUT_SYNC_BYPASS_BITS);
 
     // TODO: Configure clock frequency
 
