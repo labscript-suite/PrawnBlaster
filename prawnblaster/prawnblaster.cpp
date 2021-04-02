@@ -196,16 +196,16 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
     switch (config->sm)
     {
     case 0:
-        instruction_dreq = DREQ_PIO0_TX0;
+        instruction_dreq = DREQ_PIO1_TX0;
         break;
     case 1:
-        instruction_dreq = DREQ_PIO0_TX1;
+        instruction_dreq = DREQ_PIO1_TX1;
         break;
     case 2:
-        instruction_dreq = DREQ_PIO0_TX2;
+        instruction_dreq = DREQ_PIO1_TX2;
         break;
     case 3:
-        instruction_dreq = DREQ_PIO0_TX3;
+        instruction_dreq = DREQ_PIO1_TX3;
         break;
     default:
         break;
@@ -232,16 +232,16 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
     switch (config->sm)
     {
     case 0:
-        waits_dreq = DREQ_PIO0_RX0;
+        waits_dreq = DREQ_PIO1_RX0;
         break;
     case 1:
-        waits_dreq = DREQ_PIO0_RX1;
+        waits_dreq = DREQ_PIO1_RX1;
         break;
     case 2:
-        waits_dreq = DREQ_PIO0_RX2;
+        waits_dreq = DREQ_PIO1_RX2;
         break;
     case 3:
-        waits_dreq = DREQ_PIO0_RX3;
+        waits_dreq = DREQ_PIO1_RX3;
         break;
     default:
         break;
