@@ -79,9 +79,12 @@ Note: the commands are only read if terminated with `\r\n`.
 * `get <pseudoclock:int> <addr:int>`: Gets the half-period and reps of the instruction at `addr` for the pseudoclock `pseudoclock` (pseudoclock is zero indexed). Return values are integers, separated by a space, in the same format as `set`.
 * `go high <pseudoclock:int>`: Forces the GPIO output high for the pseudoclock `pseudoclock` (pseudoclock is zero indexed). This is useful for debugging.
 * `go low <pseudoclock:int>`: Forces the GPIO output low for the pseudoclock `pseudoclock` (pseudoclock is zero indexed). This is useful for debugging.
-* `setinpin <pseudoclock:int> <pin:int>`: Configures which GPIO to use for the pseudoclock `pseudoclock` trigger input (pseudoclock is zero indexed). Defaults to GPIO 0, 2, 4, and 6 for pseudoclocks 0, 1, 2 and 3 respectively. Should be between 0 and 19 inclusive.
-* `setoutpin <pseudoclock:int> <pin:int>`: Configures which GPIO to use for the pseudoclock `pseudoclock` output (pseudoclock is zero indexed). Defaults to GPIO 9, 11, 13, and 15 for pseudoclocks 0, 1, 2, and 3 respectively. Should be between 0 and 19 inclusive or 25 (for the LED - useful for debugging without an oscilloscope).
+* `setinpin <pseudoclock:int> <pin:int>`: Configures which GPIO to use for the pseudoclock `pseudoclock` trigger input (pseudoclock is zero indexed). Defaults to GPIO 0, 2, 4, and 6 for pseudoclocks 0, 1, 2 and 3 respectively. Should be between 0 and 19 inclusive. Trigger inputs can be shared between pseudoclocks (e.g. `setinpin 0 10` followed by `setinpin 1 10` is valid). Note that different defaults may be used if you explicitly assign the default for another use via `setinpin` or `setoutpin`. See FAQ below for more details.
+* `setoutpin <pseudoclock:int> <pin:int>`: Configures which GPIO to use for the pseudoclock `pseudoclock` output (pseudoclock is zero indexed). Defaults to GPIO 9, 11, 13, and 15 for pseudoclocks 0, 1, 2, and 3 respectively. Should be between 0 and 19 inclusive or 25 (for the LED - useful for debugging without an oscilloscope). Must be unique for each output. Note that different defaults may be used if you explicitly assign the default for another use via `setinpin` or `setoutpin`. See FAQ below for more details.
+* `getinpin <pseudoclock:int>`: Gets the currently set trigger input pin for pseudoclock `pseudoclock`. Returns either an integer corresponding to the set pin or `default` to indicate it will try and use the default pin as defined above for `setinpin`. See FAQ below for more details on what happens if it can't use the default.
+* `getoutpin <pseudoclock:int>`: Gets the currently set trigger output pin for pseudoclock `pseudoclock`. Returns either an integer corresponding to the set pin or `default` to indicate it will use try and use the default pin as defined above for `setoutpin`. See FAQ below for more details on what happens if it can't use the default.
 * `debug <state:str>`: Turns on extra debug messages printed over serial. `state` should be `on` or `off` (no string quotes required).
+* `setpio <core:int>`: Sets whether the PrawnBlaster should use pio0 or pio1 in the RP2040 chip (both have 4 state machines). Defaults to `0` (pio0) on powerup. May be useful if your particular board shows different timing behaviour (on the sub 10ns scale) between the PIO cores and you care about this level of precision. Otherwise you can leave this as the default.
 
 ## Reconfiguring the internal clock.
 The clock frequency (and even source) can be reconfigured at runtime (it is initially set to 100 MHz on every boot).
@@ -130,3 +133,19 @@ The initial start trigger (if using `hwstart`) and standard waits should only re
 
 Note that using indefinite waits requires that your trigger pulse is at least 12 clock cycles long and that it does not go high until 4 clock cycles after the previous instruction has completed.
 If this requirement is not met, you may find that your first wait (in the indefinite wait) reports a wait length and/or the second (indefinite) wait is not immediately processed until a subsequent trigger pulse. This is due to the architecture of how indefinite waits are defined (as two sequential waits).
+
+### Default pins
+While we have specified defaults for input/output pins (see serial commands above), there are circumstances where this will not happen.
+For example, the default input pin for pseudoclock 0 is GPIO 0.
+If this was explicitly assigned to pseudoclock 1 (as either an input or an output - e.g. `setoutpin 1 0`), then `getinpin 0` will still report `default` until you attempt to use any of the I/O of the PrawnBlaster.
+At this point, defaults will be assigned to explicit pins.
+Pin 0 would usually be assigned as the trigger input pin for pseudoclock 0, but its already in use because it was explicitly set for pseudoclock 1 output.
+If a default pin is in use, we look for the lowest pin number that is not in use, and use that instead.
+After using PrawnBlaster I/O, a call to `getinpin`/`getoutpin` will report the actual pin in use and not `default`.
+
+What this ultimately means is that if you use a mixture of explicit pin sets and leave the remaining on default, you may not actually get the defaults we list (depending on what pins you have reallocated).
+If you want to find out what pins, you should
+1. Set the number of pseudoclocks in use
+2. Set an explicit pins you care about with `setinpin`/`setoutpin`.
+3. Send `go low 0` to force defaults to be assigned explicit pins (this is the simplest command that uses an output).
+4. Send `getinpin 0`, `getoutpin 0`, (etc. if using more than 1 pseudoclock) in order to determine which GPIO pins have actually been assigned to each pseudoclock.
