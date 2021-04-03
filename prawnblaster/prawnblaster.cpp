@@ -102,9 +102,6 @@ void set_status(int new_status)
 
 bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, uint32_t hwstart, int max_instructions_per_pseudoclock, int max_waits_per_pseudoclock)
 {
-    // Claim the PUI
-    pio_claim_sm_mask(config->pio, 1u << config->sm);
-
     // Zero out waits array
     int max_waits = (max_waits_per_pseudoclock + 1);
     for (int i = config->sm * max_waits; i < (config->sm + 1) * max_waits; i++)
@@ -162,6 +159,20 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
         return false;
     }
 
+    if (words_to_send == 2)
+    {
+        // Just a stop instruction (aka empty set of instructions)
+        // so don't run this pseudoclock
+        config->configured = false;
+
+        if (DEBUG)
+        {
+            printf("Pseudoclock %d has no instructions. It will not run this time.\n", config->sm);
+        }
+
+        return true;
+    }
+
     if (DEBUG)
     {
         // word count:
@@ -171,6 +182,9 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
         //      subtract off one to remove the stop instruction from the wait count
         printf("Will send %d instructions containing %d waits to pseudoclock %d\n", (words_to_send - 2) / 2, wait_count - 1, config->sm);
     }
+    
+    // Claim the POI
+    pio_claim_sm_mask(config->pio, 1u << config->sm);
 
     // Configure PIO Statemachine
     pio_pseudoclock_init(config->pio, config->sm, prog_offset, config->OUT_PIN, config->IN_PIN);
@@ -537,7 +551,15 @@ void core1_entry()
             set_status(RUNNING);
 
             // Start the PIO SMs together as well as synchronising the clocks
-            pio_enable_sm_mask_in_sync(pio_to_use, ((1 << num_pseudoclocks_in_use) - 1));
+            uint enable_mask = 0;
+            for (int i = 0; i < num_pseudoclocks_in_use; i++)
+            {
+                if (pseudoclock_configs[i].configured)
+                {
+                    enable_mask |= 1u<<i;
+                }
+            }
+            pio_enable_sm_mask_in_sync(pio_to_use, enable_mask);
 
             // Wait for DMA transfers to finish
             for (int i = 0; i < num_pseudoclocks_in_use; i++)
