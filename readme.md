@@ -129,13 +129,13 @@ We recommend you personally verify the output of the PrawnBlaster is as expected
 The PrawnBlaster is named after the Australian $5 note, which is colloquially known as a "Prawn". 
 This follows the tradition started by the PineBlaster which was named after the Australian $50 note (colloquially known as the "Pineapple").
 
-### What are the trigger pulse requirements
+### What are the trigger pulse requirements?
 The initial start trigger (if using `hwstart`) and standard waits should only require a trigger pulse that is 4 clock cycles long (there is a 2 clock cycle buffer in the Pico GPIO design to reject spurious pulses).
 
 Note that using indefinite waits requires that your trigger pulse is at least 12 clock cycles long and that it does not go high until 4 clock cycles after the previous instruction has completed.
 If this requirement is not met, you may find that your first wait (in the indefinite wait) reports a wait length and/or the second (indefinite) wait is not immediately processed until a subsequent trigger pulse. This is due to the architecture of how indefinite waits are defined (as two sequential waits).
 
-### Default pins
+### What are the default pins?
 While we have specified defaults for input/output pins (see serial commands above), there are circumstances where this will not happen.
 For example, the default input pin for pseudoclock 0 is GPIO 0.
 If this was explicitly assigned to pseudoclock 1 (as either an input or an output - e.g. `setoutpin 1 0`), then `getinpin 0` will still report `default` until you attempt to use any of the I/O of the PrawnBlaster.
@@ -150,3 +150,10 @@ If you want to find out what pins, you should
 2. Set an explicit pins you care about with `setinpin`/`setoutpin`.
 3. Send `go low 0` to force defaults to be assigned explicit pins (this is the simplest command that uses an output).
 4. Send `getinpin 0`, `getoutpin 0`, (etc. if using more than 1 pseudoclock) in order to determine which GPIO pins have actually been assigned to each pseudoclock.
+
+### Can I overclock the Pico board?
+Yes, some people have reported being able to significantly overclock their Raspberry Pi Pico boards.
+While we do not recommend you do so (nor will we be liable for any damage to your Pico or attached devices should you overclock it), we have provided a version of the PrawnBlaster firmware with no upper limit to the clock frequency [here](https://github.com/labscript-suite/PrawnBlaster/blob/master/build/prawnblaster/prawnblasteroverclock.uf2).
+Use at your own risk!
+We provide no support for the overclockable firmware.
+If you need to tweak any other operating parameters of the Pico in order to achieve a stable overclock, you will need to manually modify the firmware source code and recompile it with those changes.

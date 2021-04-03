@@ -970,13 +970,14 @@ void loop()
             }
             else
             {
+#ifndef PRAWNBLASTER_OVERCLOCK
                 // Do validation checking on values provided
                 if (freq > 133 * MHZ)
                 {
                     printf("Invalid clock frequency specified\n");
                     return;
                 }
-
+#endif //PRAWNBLASTER_OVERCLOCK
                 // Set new clock frequency
                 if (src == 0)
                 {
