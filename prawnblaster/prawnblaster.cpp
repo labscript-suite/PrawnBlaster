@@ -48,6 +48,7 @@ const unsigned int non_loop_path_length = 5;
 
 uint OUT_PINS[4];
 uint IN_PINS[4];
+const uint INVALID_PIN_NUMBER = 100;
 
 int num_pseudoclocks_in_use;
 PIO pio_to_use;
@@ -418,6 +419,66 @@ void free_pseudoclock_pio_sm(pseudoclock_config *config)
 //     }
 // }
 
+bool pin_in_use(int pin)
+{
+    // Check in pin is in use
+    for (int i = 0; i < 4; i++)
+    {
+        if (OUT_PINS[i] == pin || IN_PINS[i] == pin)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+int find_free_pin()
+{
+    // Find a pin number that is not in use
+    for (int i = 0; i < 20; i++)
+    {
+        if (!pin_in_use(i))
+        {
+            return i;
+        }
+    }
+    return INVALID_PIN_NUMBER;
+}
+
+void configure_missing_pins()
+{
+    // Set default pin numbers if we are trying to use the PrawnBlaster and have
+    // not explicitly set them with a call to setinpin/setoutpin
+    for (int i = 0; i < num_pseudoclocks_in_use; i++)
+    {
+        if (IN_PINS[i] == INVALID_PIN_NUMBER)
+        {
+            if (!pin_in_use(2 * i))
+            {
+                IN_PINS[i] = 2 * i;
+            }
+            else
+            {
+                IN_PINS[i] = find_free_pin();
+            }
+        }
+    }
+    for (int i = 0; i < num_pseudoclocks_in_use; i++)
+    {
+        if (OUT_PINS[i] == INVALID_PIN_NUMBER)
+        {
+            if (!pin_in_use(9 + 2 * i))
+            {
+                OUT_PINS[i] = 9 + 2 * i;
+            }
+            else
+            {
+                OUT_PINS[i] = find_free_pin();
+            }
+        }
+    }
+}
+
 void core1_entry()
 {
     // PIO initialisation
@@ -612,6 +673,7 @@ void readline()
 
 void configure_gpio()
 {
+    configure_missing_pins();
     // initialise output pin. Needs to be done after state machine has run
     for (int i = 0; i < num_pseudoclocks_in_use; i++)
     {
@@ -811,6 +873,54 @@ void loop()
             printf("ok\n");
         }
     }
+    else if (strncmp(readstring, "getoutpin", 9) == 0)
+    {
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u", &pseudoclock);
+        if (parsed < 1)
+        {
+            printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+        }
+        else
+        {
+            if (OUT_PINS[pseudoclock] == INVALID_PIN_NUMBER)
+            {
+                printf("default\n");
+            }
+            else
+            {
+                printf("%u\n", OUT_PINS[pseudoclock]);
+            }
+        }
+    }
+    else if (strncmp(readstring, "getinpin", 8) == 0)
+    {
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u", &pseudoclock);
+        if (parsed < 1)
+        {
+            printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+        }
+        else
+        {
+            if (IN_PINS[pseudoclock] == INVALID_PIN_NUMBER)
+            {
+                printf("default\n");
+            }
+            else
+            {
+                printf("%u\n", IN_PINS[pseudoclock]);
+            }
+        }
+    }
     else if (strncmp(readstring, "setclock", 8) == 0)
     {
         unsigned int src;  // 0 = internal, 1=GPIO pin 20, 2=GPIO pin 22
@@ -917,6 +1027,7 @@ void loop()
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
     {
+        configure_gpio();
         // Force output low in case it was left high
         for (int i = 0; i < num_pseudoclocks_in_use; i++)
         {
@@ -930,6 +1041,7 @@ void loop()
     }
     else if ((strncmp(readstring, "start", 5) == 0))
     {
+        configure_gpio();
         // Force output low in case it was left high
         for (int i = 0; i < num_pseudoclocks_in_use; i++)
         {
@@ -1091,14 +1203,11 @@ int main()
 {
     DEBUG = 0;
     // Initial config for output pins
-    OUT_PINS[0] = 9;
-    OUT_PINS[1] = 11;
-    OUT_PINS[2] = 13;
-    OUT_PINS[3] = 15;
-    IN_PINS[0] = 0;
-    IN_PINS[1] = 2;
-    IN_PINS[2] = 4;
-    IN_PINS[3] = 6;
+    for (int i = 0; i < 4; i++)
+    {
+        OUT_PINS[i] = INVALID_PIN_NUMBER;
+        IN_PINS[i] = INVALID_PIN_NUMBER;
+    }
     // start with only one in use
     num_pseudoclocks_in_use = 1;
     pio_to_use = pio0;
