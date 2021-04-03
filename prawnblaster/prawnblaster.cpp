@@ -32,6 +32,8 @@
 
 #include "pseudoclock.pio.h"
 
+const char VERSION[11] = "0.1.0";
+
 int DEBUG;
 
 // Can't seem to have this be used to define array size even though it's a constant
@@ -753,7 +755,11 @@ void loop()
 {
     readline();
     int local_status = get_status();
-    if (strncmp(readstring, "status", 6) == 0)
+    if (strncmp(readstring, "version", 7) == 0)
+    {
+        printf("version: %s\n", VERSION);
+    }
+    else if (strncmp(readstring, "status", 6) == 0)
     {
         printf("run-status:%d clock-status:%d\n", local_status, clock_status);
     }
