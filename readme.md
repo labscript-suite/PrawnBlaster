@@ -157,3 +157,13 @@ While we do not recommend you do so (nor will we be liable for any damage to you
 Use at your own risk!
 We provide no support for the overclockable firmware.
 If you need to tweak any other operating parameters of the Pico in order to achieve a stable overclock, you will need to manually modify the firmware source code and recompile it with those changes.
+
+### Are all 4 pseudoclocks synchronised?
+Our testing indicates the output pulses are synchronised and in phase (at least to within ~1/10th of a clock cycle).
+We have observed (see [#5](https://github.com/labscript-suite/PrawnBlaster/issues/5)) that the trigger inputs are not processed in phase.
+Particularly, the 4th pseudoclock is almost a full clock cycle out of phase (at least on the board we tested).
+This can lead to one pseudoclock interpreting a trigger earlier or later than the others, which causes it to be out of sync by 2 clock cycles (which is the precision we detect resume triggers to), depending on when the trigger pulse occurs relative to the sample of trigger pulses by the PrawnBlaster.
+If you need wait resumes to be synchronised to nanosecond precision between your pseudoclocks, you should characterise your board to see how well the wait retriggers are synchronised (and possibly ultimately use something more expensive than a $4 device!).
+If you do not mind a fluctuation of 2 clock cycles (20ns by default), which we expect applies to the vast majority of users, then you should not have a problem.
+It is also worth pointing out that for a specific set of retrigger times, if everything is referenced to the same external clock (including what generates the external trigger), then the behaviour of the board is consistent from shot-to-shot (it is not a 20ns jitter, it's an out-of-phase sampling of the input triggers as best we can tell).
+Note: we have not characterised more than one board, nor have we compared the synchronisation of pseudoclock 0 on a board to pseudoclock 0 on another.
