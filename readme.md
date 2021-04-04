@@ -67,12 +67,13 @@ Note the baudrate of `152000` and the requirement that commands be terminated wi
 ## Supported serial commands.
 Note: the commands are only read if terminated with `\r\n`.
 
+* `version`: Responds with a string containing the firmware version.
 * `status`: Responds with a string containing the PrawnBlaster status in the format `run-status:<int> clock-status:<int>` where the `run-status` integer is `0=manual-mode, 1=transitioning to buffered-execution, 2=buffered-execution, 3=abort requested, 4=currently aborting buffered execution, 5=last buffered-execution aborted, 6=transitioning to manual-mode`. `clock-status` is either 0 (for internal clock) or 1 (for external clock).
 * `getfreqs`: Responds with a multi-line string containing the current operating frequencies of various clocks (you will be most interested in `pll_sys` and `clk_sys`). Multiline string ends with `ok\n`.
 * `abort`: Prematurely ends buffered-execution.
 * `setclock <mode:int> <freq:int>`: Reconfigures the clock source. See below for more details.
 * `setnumpseudoclocks <number:int>`: Set the number of independent pseudoclocks. Must be between 1 and 4 (inclusive). Default at boot is 1. Configuring a number higher than one reduces the number of available instructions per pseudoclock by that factor. E.g. 2 pseudoclocks have 30,000 instructions each. 3 pseudoclocks have 20,000 instructions each. 4 pseudoclocks have 15,000 instructions each.
-* `getwait <pseudoclock:int> <wait:int>`: Returns an integer related to the length of wait number `wait` for the pseudoclock `pseudoclock` (pseudoclock is zero indexed). `wait` starts at `0`. The length of the wait (in seconds) can be calculated by subtracting the returned value from the relevant wait timeout and dividing the result by the clock frequency (by default 100 MHz). A returned value of `4294967295` (`2^32-1`) means the wait timed out. There may be more waits available than were in your latest program. If you had `N` waits, query the first `N` values (starting from 0). Note that wait lengths and only accurate to +/- 1 clock cycle as the detection loop length is 2 clock cycles. Indefinite waits should report as `4294967295` (assuming that the trigger pulse length is sufficient, see the FAQ below).
+* `getwait <pseudoclock:int> <wait:int>`: Returns an integer related to the length of wait number `wait` for the pseudoclock `pseudoclock` (pseudoclock is zero indexed). `wait` starts at `0`. The length of the wait (in seconds) can be calculated by subtracting the returned value from the relevant wait timeout and dividing the result by the clock frequency (by default 100 MHz). A returned value of `4294967295` (`2^32-1`) means the wait timed out. There may be more waits available than were in your latest program. If you had `N` waits, query the first `N` values (starting from 0). Note that wait lengths and only accurate to +/- 1 clock cycle as the detection loop length is 2 clock cycles. Indefinite waits should report as `4294967295` (assuming that the trigger pulse length is sufficient, see the FAQ below). Can be queried during buffered execution and will return `wait not yet available` if the wait has not yet completed.
 * `start`: Immediately triggers the execution of the instruction set.
 * `hwstart`: Triggers the execution of the instruction set(s), but only after first detecting logical high on the trigger input(s).
 * `set <pseudoclock:int> <addr:int> <half-period:int> <reps:int>`: Sets the values of instruction number `addr` for the pseudoclock `pseudoclock` (pseudoclock is zero indexed). `addr` starts at `0`. `half-period` is specified in clock cycles and must be at least `5` (and less than 2^32) for a normal instruction. `reps` should be `1` or more (and less than 2^32) for a normal instruction and indicates how many times the pulse should repeat. Special instructions can be specified with `reps=0`. A stop (end execution) instruction is specified by setting both `reps` and `half-period` to `0`. A wait instruction is specified by `reps=0` and `half-period=<wait timeout in clock cycles>` where the wait-timeout/half-period must be at least 6 clock cycles. Two waits in a row (sequential PrawnBlaster instructions) will trigger an indefinite wait should the first timeout expire (the second wait timeout is ignored and the length of this wait is not logged). See below (FAQ) for details on the requirements for trigger pulse lengths.
@@ -128,13 +129,13 @@ We recommend you personally verify the output of the PrawnBlaster is as expected
 The PrawnBlaster is named after the Australian $5 note, which is colloquially known as a "Prawn". 
 This follows the tradition started by the PineBlaster which was named after the Australian $50 note (colloquially known as the "Pineapple").
 
-### What are the trigger pulse requirements
+### What are the trigger pulse requirements?
 The initial start trigger (if using `hwstart`) and standard waits should only require a trigger pulse that is 4 clock cycles long (there is a 2 clock cycle buffer in the Pico GPIO design to reject spurious pulses).
 
 Note that using indefinite waits requires that your trigger pulse is at least 12 clock cycles long and that it does not go high until 4 clock cycles after the previous instruction has completed.
 If this requirement is not met, you may find that your first wait (in the indefinite wait) reports a wait length and/or the second (indefinite) wait is not immediately processed until a subsequent trigger pulse. This is due to the architecture of how indefinite waits are defined (as two sequential waits).
 
-### Default pins
+### What are the default pins?
 While we have specified defaults for input/output pins (see serial commands above), there are circumstances where this will not happen.
 For example, the default input pin for pseudoclock 0 is GPIO 0.
 If this was explicitly assigned to pseudoclock 1 (as either an input or an output - e.g. `setoutpin 1 0`), then `getinpin 0` will still report `default` until you attempt to use any of the I/O of the PrawnBlaster.
@@ -149,3 +150,10 @@ If you want to find out what pins, you should
 2. Set an explicit pins you care about with `setinpin`/`setoutpin`.
 3. Send `go low 0` to force defaults to be assigned explicit pins (this is the simplest command that uses an output).
 4. Send `getinpin 0`, `getoutpin 0`, (etc. if using more than 1 pseudoclock) in order to determine which GPIO pins have actually been assigned to each pseudoclock.
+
+### Can I overclock the Pico board?
+Yes, some people have reported being able to significantly overclock their Raspberry Pi Pico boards.
+While we do not recommend you do so (nor will we be liable for any damage to your Pico or attached devices should you overclock it), we have provided a version of the PrawnBlaster firmware with no upper limit to the clock frequency [here](https://github.com/labscript-suite/PrawnBlaster/blob/master/build/prawnblaster/prawnblasteroverclock.uf2).
+Use at your own risk!
+We provide no support for the overclockable firmware.
+If you need to tweak any other operating parameters of the Pico in order to achieve a stable overclock, you will need to manually modify the firmware source code and recompile it with those changes.
