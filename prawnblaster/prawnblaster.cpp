@@ -57,6 +57,7 @@ PIO pio_to_use;
 
 // Mutex for status
 static mutex_t status_mutex;
+static mutex_t wait_mutex;
 
 // STATUS flag
 int status;
@@ -72,6 +73,9 @@ int status;
 int clock_status;
 #define INTERNAL 0
 #define EXTERNAL 1
+
+// number of waits storage
+int num_waits_processed[4];
 
 struct pseudoclock_config
 {
@@ -184,7 +188,7 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
         //      subtract off one to remove the stop instruction from the wait count
         printf("Will send %d instructions containing %d waits to pseudoclock %d\n", (words_to_send - 2) / 2, wait_count - 1, config->sm);
     }
-    
+
     // Claim the POI
     pio_claim_sm_mask(config->pio, 1u << config->sm);
 
@@ -327,29 +331,6 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
     config->configured = true;
 
     return true;
-}
-
-void process_waits(pseudoclock_config *config, int max_waits_per_pseudoclock)
-{
-    // Note: We are not doing this right now because I want to distinguish
-    // between triggering just as the timeout expires (so still jumping on
-    // pin high) and the counter running out (and the assembly code falling
-    // into waitdone without an external trigger). This is because the
-    // latter is technically 1 clock cycle longer than the former, and so
-    // the counter will naturally demonstrate that.
-
-    // Now process the read waits (but ignore the last one that was the stop signal)
-    int max_waits = (max_waits_per_pseudoclock + 1);
-    for (int i = config->sm * max_waits; i < (config->sm * max_waits) + config->waits_to_send - 1; i++)
-    {
-        // Check for timeout wait.
-        // This integer equals 2^32-1 - aka the biggest number and what happens when you subtract one from 0 (it wraps around)
-        // Note that we do not need to
-        if (waits[i] == 4294967295)
-        {
-            waits[i] = 0; // decrement happens regardless of jump condition in PIO program.
-        }
-    }
 }
 
 void free_pseudoclock_pio_sm(pseudoclock_config *config)
@@ -495,6 +476,30 @@ void configure_missing_pins()
     }
 }
 
+void calculate_processed_waits(pseudoclock_config *configs)
+{
+    // For every active pseudoclock, check how many waits we expected to see and
+    // subtract off the remaining number of DMA transfers to do. This gives us a
+    // measure of which waits are ready to be accessed
+    for (int i = 0; i < num_pseudoclocks_in_use; i++)
+    {
+        if (configs[i].configured)
+        {
+            mutex_enter_blocking(&wait_mutex);
+            num_waits_processed[i] = configs[i].waits_to_send - dma_channel_hw_addr(configs[i].waits_dma_channel)->transfer_count;
+            mutex_exit(&wait_mutex);
+        }
+    }
+}
+
+int get_num_processed_waits(int pseudoclock)
+{
+    mutex_enter_blocking(&wait_mutex);
+    int num = num_waits_processed[pseudoclock];
+    mutex_exit(&wait_mutex);
+    return num;
+}
+
 void core1_entry()
 {
     // PIO initialisation
@@ -507,6 +512,14 @@ void core1_entry()
     {
         // wait for message from main core
         uint32_t hwstart = multicore_fifo_pop_blocking();
+
+        // clear out number of processed waits per pseudoclock
+        mutex_enter_blocking(&wait_mutex);
+        num_waits_processed[0] = 0;
+        num_waits_processed[1] = 0;
+        num_waits_processed[2] = 0;
+        num_waits_processed[3] = 0;
+        mutex_exit(&wait_mutex);
 
         // Initialise configs
         pseudoclock_config pseudoclock_configs[4];
@@ -558,7 +571,7 @@ void core1_entry()
             {
                 if (pseudoclock_configs[i].configured)
                 {
-                    enable_mask |= 1u<<i;
+                    enable_mask |= 1u << i;
                 }
             }
             pio_enable_sm_mask_in_sync(pio_to_use, enable_mask);
@@ -574,7 +587,7 @@ void core1_entry()
                     }
                     while (dma_channel_is_busy(pseudoclock_configs[i].instructions_dma_channel) && get_status() != ABORT_REQUESTED)
                     {
-                        tight_loop_contents();
+                        calculate_processed_waits(pseudoclock_configs);
                     }
                     if (DEBUG)
                     {
@@ -582,7 +595,7 @@ void core1_entry()
                     }
                     while (dma_channel_is_busy(pseudoclock_configs[i].waits_dma_channel) && get_status() != ABORT_REQUESTED)
                     {
-                        tight_loop_contents();
+                        calculate_processed_waits(pseudoclock_configs);
                     }
                     if (DEBUG)
                     {
@@ -591,6 +604,10 @@ void core1_entry()
                 }
             }
         }
+
+        // One final calculation of processed waits in case we missed it in the
+        // last loop iteration
+        calculate_processed_waits(pseudoclock_configs);
 
         // If we aborted, update the status to acknowledge the abort
         if (get_status() == ABORT_REQUESTED)
@@ -611,21 +628,6 @@ void core1_entry()
             }
 
             set_status(TRANSITION_TO_STOP);
-
-            // Note: We are not doing this right now because I want to distinguish
-            // between triggering just as the timeout expires (so still jumping on
-            // pin high) and the counter running out (and the assembly code falling
-            // into waitdone without an external trigger). This is because the
-            // latter is technically 1 clock cycle longer than the former, and so
-            // the counter will naturally demonstrate that.
-            //
-            // for (int i = 0; i < num_pseudoclocks_in_use; i++)
-            // {
-            //     if (pseudoclock_configs[i].configured)
-            //     {
-            //         process_waits(&pseudoclock_configs[i], max_waits / num_pseudoclocks_in_use);
-            //     }
-            // }
         }
 
         // cleanup
@@ -796,6 +798,45 @@ void loop()
             }
             // Should be done!
             printf("ok\n");
+        }
+    }
+    else if (strncmp(readstring, "getwait", 7) == 0)
+    {
+        unsigned int addr;
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &addr);
+        int waits_per_pseudoclock = (max_waits / num_pseudoclocks_in_use) + 1;
+        if (parsed < 2)
+        {
+            printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+        }
+        else if (addr >= waits_per_pseudoclock)
+        {
+            printf("invalid address\n");
+        }
+        else if (addr >= get_num_processed_waits(pseudoclock))
+        {
+            printf("wait not yet available\n");
+        }
+        else
+        {
+            unsigned int wait_remaining = waits[pseudoclock * waits_per_pseudoclock + addr];
+            // don't multiply the -1 wraparound of the unsigned int - this means a
+            // wait timed out.
+            if (wait_remaining != 4294967295)
+            {
+                // Note that these are not the lengths of the waits, but how many base (system) clock ticks were left
+                // before timeout. 0 = timeout. a wait with a timeout of 8, and a value reported here as 2, means the
+                // wait was 6 clock ticks long.
+                //
+                // We multiply by two here to counteract the divide by two when storing (see below)
+                wait_remaining *= 2;
+            }
+            printf("%u\n", wait_remaining);
         }
     }
     // Prevent manual mode commands from running during buffered execution
@@ -970,6 +1011,7 @@ void loop()
             }
             else
             {
+
 #ifndef PRAWNBLASTER_OVERCLOCK
                 // Do validation checking on values provided
                 if (freq > 133 * MHZ)
@@ -978,6 +1020,7 @@ void loop()
                     return;
                 }
 #endif //PRAWNBLASTER_OVERCLOCK
+
                 // Set new clock frequency
                 if (src == 0)
                 {
@@ -999,41 +1042,6 @@ void loop()
                     printf("ok\n");
                 }
             }
-        }
-    }
-    else if (strncmp(readstring, "getwait", 7) == 0)
-    {
-        unsigned int addr;
-        unsigned int pseudoclock;
-        int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &addr);
-        int waits_per_pseudoclock = (max_waits / num_pseudoclocks_in_use) + 1;
-        if (parsed < 2)
-        {
-            printf("invalid request\n");
-        }
-        else if (pseudoclock < 0 || pseudoclock > 3)
-        {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
-        }
-        else if (addr >= waits_per_pseudoclock)
-        {
-            printf("invalid address\n");
-        }
-        else
-        {
-            unsigned int wait_remaining = waits[pseudoclock * waits_per_pseudoclock + addr];
-            // don't multiply the -1 wraparound of the unsigned int - this means a
-            // wait timed out.
-            if (wait_remaining != 4294967295)
-            {
-                // Note that these are not the lengths of the waits, but how many base (system) clock ticks were left
-                // before timeout. 0 = timeout. a wait with a timeout of 8, and a value reported here as 2, means the
-                // wait was 6 clock ticks long.
-                //
-                // We multiply by two here to counteract the divide by two when storing (see below)
-                wait_remaining *= 2;
-            }
-            printf("%u\n", wait_remaining);
         }
     }
     else if (strncmp(readstring, "setpio", 6) == 0)
@@ -1231,11 +1239,12 @@ void loop()
 int main()
 {
     DEBUG = 0;
-    // Initial config for output pins
+    // Initial config for output pins and number of processed waits
     for (int i = 0; i < 4; i++)
     {
         OUT_PINS[i] = INVALID_PIN_NUMBER;
         IN_PINS[i] = INVALID_PIN_NUMBER;
+        num_waits_processed[i] = 0;
     }
     // start with only one in use
     num_pseudoclocks_in_use = 1;
@@ -1243,6 +1252,7 @@ int main()
 
     // initialise the status mutex
     mutex_init(&status_mutex);
+    mutex_init(&wait_mutex);
 
     // configure resus callback that will reconfigure the clock for us
     // either when we change clock settings or when the clock fails (if external)
