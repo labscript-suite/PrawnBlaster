@@ -22,7 +22,7 @@ In the case of the PrawnBlaster, you can program in a series of instructions con
 * Support for timeouts on those waits (with maximum length 42.9 seconds).
 * Ability to internally monitor the length of those waits and report them over the serial connection at the end of the instruction execution.
 * Support for indefinite waits until retrigger (Note: the PrawnBlaster will not report the length of indefinite waits).
-* Support for referencing to an external clock source to synchronise with other devices (officially limited to 50MHz on the pico but testing has shown it works up to 125MHz, see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
+* Support for referencing to an external clock source to synchronise with other devices (officially limited to 50MHz on the Pico but testing has shown it works up to 125MHz, see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
 
 Note 1: The half-period is the time a clock pulse stays high. All clock pulses produced by the PrawnBlaster have a 50-50 duty cycle.
 
@@ -38,14 +38,14 @@ The mass storage device should unmount after the copy completes. Your Pico is no
 
 ## PrawnBlaster pinout
 
-* Pseudoclock 1 output: GPIO 9 (configurable via serial command)
-* Pseudoclock 2 output: GPIO 11 (configurable via serial command)
-* Pseudoclock 3 output: GPIO 13 (configurable via serial command)
-* Pseudoclock 4 output: GPIO 15 (configurable via serial command)
-* Pseudoclock 1 trigger input: GPIO 0 (configurable via serial command)
-* Pseudoclock 2 trigger input: GPIO 2 (configurable via serial command)
-* Pseudoclock 3 trigger input: GPIO 4 (configurable via serial command)
-* Pseudoclock 4 trigger input: GPIO 6 (configurable via serial command)
+* Pseudoclock 0 output: GPIO 9 (configurable via serial command)
+* Pseudoclock 1 output: GPIO 11 (configurable via serial command)
+* Pseudoclock 2 output: GPIO 13 (configurable via serial command)
+* Pseudoclock 3 output: GPIO 15 (configurable via serial command)
+* Pseudoclock 0 trigger input: GPIO 0 (configurable via serial command)
+* Pseudoclock 1 trigger input: GPIO 2 (configurable via serial command)
+* Pseudoclock 2 trigger input: GPIO 4 (configurable via serial command)
+* Pseudoclock 3 trigger input: GPIO 6 (configurable via serial command)
 * External clock reference input: GPIO 20
 * Debug clock output (can be fed into GPIO20 to test external clocking): GPIO 21 (48 MHz)
 
@@ -61,8 +61,7 @@ python -m serial.tools.miniterm --eol=CRLF COM4 115200
 ```
 
 Note the baudrate of `152000` and the requirement that commands be terminated with `\r\n` (CRLF).
-
-**Communication during buffered execution should be fine (pending the results of testing detailed in [issue #7](https://github.com/labscript-suite/PrawnBlaster/issues/7)) as serial communication is handled by a separate core.**
+Communication during buffered execution is allowed (it is handled by a separate core and will not interfere with the DMA transfer of instruction data to the Pico's PIO cores).
 
 ## Supported serial commands.
 Note: the commands are only read if terminated with `\r\n`.
@@ -158,12 +157,8 @@ Use at your own risk!
 We provide no support for the overclockable firmware.
 If you need to tweak any other operating parameters of the Pico in order to achieve a stable overclock, you will need to manually modify the firmware source code and recompile it with those changes.
 
-### Are all 4 pseudoclocks synchronised?
-Our testing indicates the output pulses are synchronised and in phase (at least to within ~1/10th of a clock cycle).
-We have observed (see [#5](https://github.com/labscript-suite/PrawnBlaster/issues/5)) that the trigger inputs are not processed in phase.
-Particularly, the 4th pseudoclock is almost a full clock cycle out of phase (at least on the board we tested).
-This can lead to one pseudoclock interpreting a trigger earlier or later than the others, which causes it to be out of sync by 2 clock cycles (which is the precision we detect resume triggers to), depending on when the trigger pulse occurs relative to the sample of trigger pulses by the PrawnBlaster.
-If you need wait resumes to be synchronised to nanosecond precision between your pseudoclocks, you should characterise your board to see how well the wait retriggers are synchronised (and possibly ultimately use something more expensive than a $4 device!).
-If you do not mind a fluctuation of 2 clock cycles (20ns by default), which we expect applies to the vast majority of users, then you should not have a problem.
-It is also worth pointing out that for a specific set of retrigger times, if everything is referenced to the same external clock (including what generates the external trigger), then the behaviour of the board is consistent from shot-to-shot (it is not a 20ns jitter, it's an out-of-phase sampling of the input triggers as best we can tell).
-Note: we have not characterised more than one board, nor have we compared the synchronisation of pseudoclock 0 on a board to pseudoclock 0 on another.
+### Are all input pins equal?
+It seems the answer to that is no - some input pins seem to have a different delay in processing triggers than others.
+There are more details in [#5](https://github.com/labscript-suite/PrawnBlaster/issues/5), **but this will not affect users of the labscript suite** since all 4 pseudoclocks will be configured to trigger from the same input pin by the labscript suite device class.
+
+If you are using the PrawnBlaster outside of the labscript suite, and want each pseudoclock to be triggered by a different GPIO pin, then you should be aware there seems to be a +/-10ns fluctuation in trigger response which may lead pseudoclocks to become out of sync with each other by 20ns per trigger.
