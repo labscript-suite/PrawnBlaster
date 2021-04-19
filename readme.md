@@ -12,7 +12,7 @@ In the case of the PrawnBlaster, you can program in a series of instructions con
 ## Features/Specifications
 
 * Only costs $5 (a tenth of the cost of the [PineBlaster](https://github.com/labscript-suite/pineblaster)).
-* Support for up to 60000 instructions (4 times the PineBlaster) spread evenly across 1 to 4 independent pseudoclocks (also 4 times the PineBlaster).
+* Support for up to 30000 instructions (4 times the PineBlaster) spread evenly across 1 to 4 independent pseudoclocks (also 4 times the PineBlaster).
 * Each instruction can be repeated up to 4294967295 times (2^32-1).
 * Minimum pulse half-period 50ns (if internal clock running at 100MHz).
 * Maximum pulse half-period ~42.9 seconds (if internal clock running at 100MHz).
@@ -71,7 +71,7 @@ Note: the commands are only read if terminated with `\r\n`.
 * `getfreqs`: Responds with a multi-line string containing the current operating frequencies of various clocks (you will be most interested in `pll_sys` and `clk_sys`). Multiline string ends with `ok\n`.
 * `abort`: Prematurely ends buffered-execution.
 * `setclock <mode:int> <freq:int>`: Reconfigures the clock source. See below for more details.
-* `setnumpseudoclocks <number:int>`: Set the number of independent pseudoclocks. Must be between 1 and 4 (inclusive). Default at boot is 1. Configuring a number higher than one reduces the number of available instructions per pseudoclock by that factor. E.g. 2 pseudoclocks have 30,000 instructions each. 3 pseudoclocks have 20,000 instructions each. 4 pseudoclocks have 15,000 instructions each.
+* `setnumpseudoclocks <number:int>`: Set the number of independent pseudoclocks. Must be between 1 and 4 (inclusive). Default at boot is 1. Configuring a number higher than one reduces the number of available instructions per pseudoclock by that factor. E.g. 2 pseudoclocks have 15,000 instructions each. 3 pseudoclocks have 10,000 instructions each. 4 pseudoclocks have 7,500 instructions each.
 * `getwait <pseudoclock:int> <wait:int>`: Returns an integer related to the length of wait number `wait` for the pseudoclock `pseudoclock` (pseudoclock is zero indexed). `wait` starts at `0`. The length of the wait (in seconds) can be calculated by subtracting the returned value from the relevant wait timeout and dividing the result by the clock frequency (by default 100 MHz). A returned value of `4294967295` (`2^32-1`) means the wait timed out. There may be more waits available than were in your latest program. If you had `N` waits, query the first `N` values (starting from 0). Note that wait lengths and only accurate to +/- 1 clock cycle as the detection loop length is 2 clock cycles. Indefinite waits should report as `4294967295` (assuming that the trigger pulse length is sufficient, see the FAQ below). Can be queried during buffered execution and will return `wait not yet available` if the wait has not yet completed.
 * `start`: Immediately triggers the execution of the instruction set.
 * `hwstart`: Triggers the execution of the instruction set(s), but only after first detecting logical high on the trigger input(s).
@@ -162,3 +162,11 @@ It seems the answer to that is no - some input pins seem to have a different del
 There are more details in [#5](https://github.com/labscript-suite/PrawnBlaster/issues/5), **but this will not affect users of the labscript suite** since all 4 pseudoclocks will be configured to trigger from the same input pin by the labscript suite device class.
 
 If you are using the PrawnBlaster outside of the labscript suite, and want each pseudoclock to be triggered by a different GPIO pin, then you should be aware there seems to be a +/-10ns fluctuation in trigger response which may lead pseudoclocks to become out of sync with each other by 20ns per trigger.
+
+### Can I use other RP2040 boards?
+Maybe - it depends what pins are available.
+In general it should work as long as it has 9 GPIO pins available for use (and not hardwired to a peripheral) and one of them is pin 20/22.
+Without pin 20 or 22, you can't externally reference the board.
+And with less GPIO pins you can't have 4 independent pseudoclocks each with an independent trigger.
+If you only need 1 trigger, you can get away with 1 pin for a trigger, 1 pin for each pseudoclock output you want (somewhere between 1 and 4) and 1 pin (either GPIO 20 or 22) for externally referencing if you need it.
+But unless you have a strong reason to get another RP2040 based board, we suggest sticking with the standard Pico (Which is usually the cheaper option anyway).
