@@ -2,8 +2,6 @@
 
 The PrawnBlaster firmware turns the $5 Raspberry Pi Pico microcontroller board into a [_labscript suite_](https://github.com/labscript-suite) pseudoclock device.
 
-**Current Development Status**: Beta. The firmware has not been well tested. There may be timing errors, errors that appear when running for long periods of time, and/or missing or undocumented features. **There is currently no labscript device class.**
-
 ## What is a pseudoclock device?
 A pseudoclock is a device that can be programmed to output a variable frequency clock.
 The entire sequence of clock pulses is programmed into internal memory (over serial) and then executed on command (in order to achieve precise timing).
