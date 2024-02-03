@@ -27,9 +27,6 @@ jobs:
           name: prawnblaster-firmware-${{ github.sha }}
           path: build/prawnblaster/*.uf2
 
-      - name: debug
-        run: echo "${{ github.ref }}"
-
       - name: Create release
         if: ${{ github.event.ref_type == 'tag' }}
         uses: "marvinpinto/action-automatic-releases@latest"
