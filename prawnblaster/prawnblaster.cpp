@@ -33,9 +33,9 @@
 #include "pseudoclock.pio.h"
 
 #ifndef PRAWNBLASTER_OVERCLOCK
-const char VERSION[16] = "1.0.0";
+const char VERSION[16] = "1.0.1";
 #else
-const char VERSION[16] = "1.0.0-overclock";
+const char VERSION[16] = "1.0.1-overclock";
 #endif //PRAWNBLASTER_OVERCLOCK
 
 int DEBUG;
