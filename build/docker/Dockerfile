@@ -1,9 +1,12 @@
 # Fetch ubuntu image
 FROM ubuntu:latest AS base
+# Attempt to auto-detect the best mirror (desn't always work well though)
+ARG APT_MIRROR="mirror://mirrors.ubuntu.com/mirrors.txt"
+# Use this one if you are in Australia
+# ARG APT_MIRROR="http://mirror.aarnet.edu.au/pub/ubuntu/archive/"
 
-# Configure mirror. Comment out or update mirror to one that is local to you if build
-# times are slow.
-RUN sed -i 's/htt[p|ps]:\/\/archive.ubuntu.com\/ubuntu\//http:\/\/mirror.aarnet.edu.au\/pub\/ubuntu\/archive\//g' /etc/apt/sources.list
+# Configure mirror. Pass --build-arg APT_MIRROR=<mirror URL> to set a mirror if this is slow
+RUN sed -i "s#htt[p|ps]://archive.ubuntu.com/ubuntu/#$APT_MIRROR#g" /etc/apt/sources.list
 
 # Install packages
 RUN \

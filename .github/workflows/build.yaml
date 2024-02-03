@@ -1,9 +1,6 @@
 name: Build firmware
 
 on:
-  push:
-    branches:
-      - philipstarkey/actions
   create:
     tags:
       - '[0-9]+.[0-9]+.[0-9]+*'
