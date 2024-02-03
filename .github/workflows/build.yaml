@@ -3,7 +3,7 @@ name: Build firmware
 on:
   create:
     tags:
-      - '[0-9]+.[0-9]+.[0-9]+*'
+      - '[0-9]+\.[0-9]+\.[0-9]+*'
   pull_request:
     types: [opened, reopened, synchronize, ready_for_review]
 
@@ -31,7 +31,7 @@ jobs:
         run: echo "${{ github.ref }}"
 
       - name: Create release
-        if: ${{ github.ref == 'refs/tags/[0-9]+.[0-9]+.[0-9]+*' }}
+        if: ${{ github.event.ref_type == 'tag' }}
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
