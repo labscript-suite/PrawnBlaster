@@ -28,7 +28,7 @@ Note 2: The internal clock can be configured to run at up to 133 MHz. We set it 
 You can increase the clock frequency at runtime (via a serial command) which scales the timing specifications accordingly.
 
 ## How to flash the firmware
-Download the latest [prawnblaster.uf2 file](https://github.com/labscript-suite/PrawnBlaster/blob/master/build/prawnblaster/prawnblaster.uf2).
+Download the latest [prawnblaster.uf2 file](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblaster.uf2).
 On your Raspberry Pi Pico, hold down the "bootsel" button while plugging the Pico into USB port on a PC (that must already be turned on).
 The Pico should mount as a mass storage device (if it doesn't, try again or consult the Pico documentation).
 Drag and drop the `.uf2` file into the mounted mass storage device.
@@ -170,7 +170,7 @@ If you want to find out what pins, you should
 
 ### Can I overclock the Pico board?
 Yes, some people have reported being able to significantly overclock their Raspberry Pi Pico boards.
-While we do not recommend you do so (nor will we be liable for any damage to your Pico or attached devices should you overclock it), we have provided a version of the PrawnBlaster firmware with no upper limit to the clock frequency [here](https://github.com/labscript-suite/PrawnBlaster/blob/master/build/prawnblaster/prawnblasteroverclock.uf2).
+While we do not recommend you do so (nor will we be liable for any damage to your Pico or attached devices should you overclock it), we have provided a version of the PrawnBlaster firmware with no upper limit to the clock frequency [here](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblasteroverclock.uf2).
 Use at your own risk!
 We provide no support for the overclockable firmware.
 If you need to tweak any other operating parameters of the Pico in order to achieve a stable overclock, you will need to manually modify the firmware source code and recompile it with those changes.
