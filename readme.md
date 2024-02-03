@@ -131,7 +131,7 @@ If you want to make changes to the firmware, or want to compile it yourself (bec
 5. Run `docker compose up` to build the PrawnBlaster firmware.
 
 Step 4 will take a while as it has to build the docker container.
-If it is slow to download packages from the Ubuntu package repositories, consider editing the mirror in the `build/docker/Dockerfile` file and trying again.
+If it is slow to download packages from the Ubuntu package repositories, consider providing an explicit apt mirror that is fast for you: `docker compose build --pull --build-arg APT_MIRROR="http://azure.archive.ubuntu.com/ubuntu/"`.
 
 If you want to change which version of the pico SDK it builds against, this is set in the `build/docker/Dockerfile` file.
 Just change the git tag of the pico SDK that gets cloned out by git, then rebuild the docker container (see step 4).
