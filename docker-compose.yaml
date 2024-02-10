@@ -3,7 +3,7 @@ name: prawnblaster
 services:
   buildfirmware:
     build:
-      dockerfile: build/docker/Dockerfile
+      dockerfile: docker/Dockerfile
     command: /bin/bash -c 'cmake .. && make'
     volumes:
       - .:/prawnblaster
