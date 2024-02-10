@@ -28,7 +28,7 @@ Note 2: The internal clock can be configured to run at up to 133 MHz. We set it 
 You can increase the clock frequency at runtime (via a serial command) which scales the timing specifications accordingly.
 
 ## How to flash the firmware
-Download the latest [prawnblaster.uf2 file](https://github.com/labscript-suite/PrawnBlaster/blob/master/build/prawnblaster/prawnblaster.uf2).
+Download the latest [prawnblaster.uf2 file](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblaster.uf2).
 On your Raspberry Pi Pico, hold down the "bootsel" button while plugging the Pico into USB port on a PC (that must already be turned on).
 The Pico should mount as a mass storage device (if it doesn't, try again or consult the Pico documentation).
 Drag and drop the `.uf2` file into the mounted mass storage device.
@@ -120,6 +120,26 @@ An external clock of 100MHz means a minimum half-period of `5/100MHz=50ns`.
 Note: Officially, the documentation for the Pico says external clock sources can only be up to 50MHz. We have successfully tested up to 125MHz (see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
 We recommend you personally verify the output of the PrawnBlaster is as expected if running from an external reference above 50MHz.
 
+## Compiling the firmware
+
+If you want to make changes to the firmware, or want to compile it yourself (because you don't trust binary blobs from the internet), we provide a docker configuration to help you do that.
+
+1. Install docker desktop and make sure it is running (if you are on Windows, you may have to mess around a bit to get virtualisation working at an operating system level)
+2. Clone this repository
+3. Open a terminal with the current working directory set to the repository root (the `docker-compose.yaml`` file should be there)
+4. Run `docker compose build --pull` to build the docker container
+5. Run `docker compose up` to build the PrawnBlaster firmware.
+
+Step 4 will take a while as it has to build the docker container.
+If it is slow to download packages from the Ubuntu package repositories, consider providing an explicit apt mirror that is fast for you: `docker compose build --pull --build-arg APT_MIRROR="http://azure.archive.ubuntu.com/ubuntu/"`.
+
+If you want to change which version of the pico SDK it builds against, this is set in the `build/docker/Dockerfile` file.
+Just change the git tag of the pico SDK that gets cloned out by git, then rebuild the docker container (see step 4).
+
+Note once the docker container is built, you can run step 5 as many times as you like.
+You do not need to rebuild the container, even if you make changes to the PrawnBlaster source code.
+You only need to rebuild the docker container if you modify the `build/docker/Dockerfile` file.
+
 ## FAQ:
 
 ### Why is it called a "PrawnBlaster"?
@@ -150,7 +170,7 @@ If you want to find out what pins, you should
 
 ### Can I overclock the Pico board?
 Yes, some people have reported being able to significantly overclock their Raspberry Pi Pico boards.
-While we do not recommend you do so (nor will we be liable for any damage to your Pico or attached devices should you overclock it), we have provided a version of the PrawnBlaster firmware with no upper limit to the clock frequency [here](https://github.com/labscript-suite/PrawnBlaster/blob/master/build/prawnblaster/prawnblasteroverclock.uf2).
+While we do not recommend you do so (nor will we be liable for any damage to your Pico or attached devices should you overclock it), we have provided a version of the PrawnBlaster firmware with no upper limit to the clock frequency [here](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblasteroverclock.uf2).
 Use at your own risk!
 We provide no support for the overclockable firmware.
 If you need to tweak any other operating parameters of the Pico in order to achieve a stable overclock, you will need to manually modify the firmware source code and recompile it with those changes.
