@@ -63,6 +63,9 @@ PIO pio_to_use;
 static mutex_t status_mutex;
 static mutex_t wait_mutex;
 
+// SIO GPIO init status
+int gpio_inited = 0;
+
 // STATUS flag
 int status;
 #define STOPPED 0
@@ -703,12 +706,17 @@ void readline()
 
 void configure_gpio()
 {
-    configure_missing_pins();
-    // initialise output pin. Needs to be done after state machine has run
-    for (int i = 0; i < num_pseudoclocks_in_use; i++)
+    if (!gpio_inited)
     {
-        gpio_init(OUT_PINS[i]);
-        gpio_set_dir(OUT_PINS[i], GPIO_OUT);
+        configure_missing_pins();
+        // initialise output pin. Needs to be done after state machine has run
+        for (int i = 0; i < num_pseudoclocks_in_use; i++)
+        {
+            gpio_init(OUT_PINS[i]);
+            gpio_set_dir(OUT_PINS[i], GPIO_OUT);
+        }
+        // update inited state
+        gpio_inited = 1;
     }
 }
 
@@ -1078,6 +1086,8 @@ void loop()
         multicore_fifo_push_blocking(1);
         // update status
         set_status(TRANSITION_TO_RUNNING);
+        // update gpio inited status
+        gpio_inited = 0;
         printf("ok\n");
     }
     else if ((strncmp(readstring, "start", 5) == 0))
@@ -1092,6 +1102,8 @@ void loop()
         multicore_fifo_push_blocking(0);
         // update status
         set_status(TRANSITION_TO_RUNNING);
+        // update gpio inited status
+        gpio_inited = 0;
         printf("ok\n");
     }
     // TODO: update this to support pseudoclock selection
