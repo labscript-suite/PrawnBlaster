@@ -1,0 +1,11 @@
+name: prawnblaster
+
+services:
+  buildfirmware:
+    build:
+      dockerfile: docker/Dockerfile
+    command: /bin/bash -c 'cmake .. && make'
+    volumes:
+      - .:/prawnblaster
+    working_dir: /prawnblaster/build
+    init: true

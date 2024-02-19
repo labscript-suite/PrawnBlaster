@@ -12,7 +12,7 @@
 # This file is used to flash a Raspberry Pi Pico microcontroller      #
 # prototyping board to create a PrawnBlaster (see readme.txt and      #
 # http://hardware.labscriptsuite.org).                                #
-# This file is licensed under the Simplified BSD License.             #
+# This file is licensed under the 3-clause BSD License.               #
 # See the license.txt file for the full license.                      #
 #                                                                     #
 #######################################################################
@@ -36,9 +36,9 @@ extern "C"{
 }
 
 #ifndef PRAWNBLASTER_OVERCLOCK
-const char VERSION[16] = "1.0.0";
+const char VERSION[16] = "1.0.1";
 #else
-const char VERSION[16] = "1.0.0-overclock";
+const char VERSION[16] = "1.0.1-overclock";
 #endif //PRAWNBLASTER_OVERCLOCK
 
 int DEBUG;

@@ -1,0 +1,39 @@
+name: Build firmware
+
+on:
+  create:
+    tags:
+      - '[0-9]+\.[0-9]+\.[0-9]+*'
+  pull_request:
+    types: [opened, reopened, synchronize, ready_for_review]
+
+jobs:
+  build-firmware:
+    runs-on: ubuntu-latest
+    name: Build firmware
+    steps:
+      - name: Check out this repository
+        uses: actions/checkout@v3
+
+      - name: Build Docker image
+        run: docker compose build --pull --build-arg APT_MIRROR="http://azure.archive.ubuntu.com/ubuntu/"
+
+      - name: Run docker container
+        run: docker compose up
+
+      - name: Upload firmware as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: prawnblaster-firmware-${{ github.sha }}
+          path: build/prawnblaster/*.uf2
+
+      - name: Create release
+        if: ${{ github.event.ref_type == 'tag' }}
+        uses: "marvinpinto/action-automatic-releases@latest"
+        with:
+          repo_token: "${{ secrets.GITHUB_TOKEN }}"
+          prerelease: false
+          files: |
+            LICENSE.txt
+            build/prawnblaster/prawnblaster.uf2
+            build/prawnblaster/prawnblasteroverclock.uf2
