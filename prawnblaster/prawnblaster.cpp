@@ -36,9 +36,9 @@ extern "C"{
 }
 
 #ifndef PRAWNBLASTER_OVERCLOCK
-const char VERSION[16] = "1.0.1";
+const char VERSION[16] = "1.1.0";
 #else
-const char VERSION[16] = "1.0.1-overclock";
+const char VERSION[16] = "1.1.0-overclock";
 #endif //PRAWNBLASTER_OVERCLOCK
 
 int DEBUG;
