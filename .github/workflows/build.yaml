@@ -28,7 +28,7 @@ jobs:
           path: build/prawnblaster/*.uf2
 
       - name: Create release
-        if: ${{ github.event.ref_type == 'tag' }}
+        if: (github.event_name == 'push' && contains(github.ref, '/tags'))
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
