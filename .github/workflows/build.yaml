@@ -13,7 +13,7 @@ jobs:
     name: Build firmware
     steps:
       - name: Check out this repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Build Docker image
         run: docker compose build --pull --build-arg APT_MIRROR="http://azure.archive.ubuntu.com/ubuntu/"
