@@ -84,6 +84,7 @@ Note: the commands are only read if terminated with `\r\n`.
 * `getoutpin <pseudoclock:int>`: Gets the currently set trigger output pin for pseudoclock `pseudoclock`. Returns either an integer corresponding to the set pin or `default` to indicate it will use try and use the default pin as defined above for `setoutpin`. See FAQ below for more details on what happens if it can't use the default.
 * `debug <state:str>`: Turns on extra debug messages printed over serial. `state` should be `on` or `off` (no string quotes required).
 * `setpio <core:int>`: Sets whether the PrawnBlaster should use pio0 or pio1 in the RP2040 chip (both have 4 state machines). Defaults to `0` (pio0) on powerup. May be useful if your particular board shows different timing behaviour (on the sub 10ns scale) between the PIO cores and you care about this level of precision. Otherwise you can leave this as the default.
+* `program`: Equivalent to disconnecting the Pico, holding down the "bootsel" button, and reconnecting the Pico. Places the Pico into firmware flashing mode; the PrawnBlaster serial port should disappear and the Pico should mount as a mass storage device.
 
 ## Reconfiguring the internal clock.
 The clock frequency (and even source) can be reconfigured at runtime (it is initially set to 100 MHz on every boot).

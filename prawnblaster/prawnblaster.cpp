@@ -22,6 +22,7 @@
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "pico/bootrom.h"
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 #include "hardware/pll.h"
@@ -1312,6 +1313,10 @@ void loop()
             gpio_put(OUT_PINS[pseudoclock], 0);
             fast_serial_printf("ok\r\n");
         }
+    }
+    else if (strncmp(readstring, "program", 7) == 0)
+    {
+        reset_usb_boot(0, 0);
     }
     else
     {
