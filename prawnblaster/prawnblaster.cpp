@@ -713,7 +713,7 @@ void resus_callback(void)
 
 void loop()
 {
-	fast_serial_read_until(readstring, 256, '\n');
+    fast_serial_read_until(readstring, 256, '\n');
     int local_status = get_status();
     if (strncmp(readstring, "version", 7) == 0)
     {
@@ -1152,7 +1152,7 @@ void loop()
     }
     else if (strncmp(readstring, "setb ", 5) == 0)
     {
-		// set a large block of instructions encoded in a binary blob of fixed length.
+        // set a large block of instructions encoded in a binary blob of fixed length.
         unsigned int start_addr;
         unsigned int inst_count;
         unsigned int pseudoclock;
@@ -1166,115 +1166,141 @@ void loop()
         {
             fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
-        else if (start_addr >= max_instructions || start_addr + inst_count >= max_instructions)
+        else if (start_addr + inst_count >= max_instructions)
         {
-            fast_serial_printf("invalid address or too many instructions\r\n");
+            fast_serial_printf("Invalid address and/or too many instructions (%d + %d).\r\n", start_addr, inst_count);
         }
-        // It takes 8 bytes to describe an instruction: 4 bytes for reps, 4 bytes for half period
-        uint32_t inst_per_buffer = SERIAL_BUFFER_SIZE / 8;
-        unsigned int addr = start_addr;
-        while(inst_count > inst_per_buffer){
-            fast_serial_read(readstring, 8*inst_per_buffer);
-            for (int i = 0; i < inst_per_buffer; i++)
+        else
+        {
+            fast_serial_printf("ready\r\n");
+            // It takes 8 bytes to describe an instruction: 4 bytes for reps, 4 bytes for half period
+            uint32_t inst_per_buffer = SERIAL_BUFFER_SIZE / 8;
+            unsigned int addr = start_addr;
+
+            // Variables to track errors
+            uint32_t reps_error_count = 0;
+            uint32_t last_reps_error_idx = 0;
+            uint32_t half_period_error_count = 0;
+            uint32_t last_half_period_error_idx = 0;
+
+            while(inst_count > inst_per_buffer){
+                fast_serial_read(readstring, 8*inst_per_buffer);
+                for (int i = 0; i < inst_per_buffer; i++)
+                {
+                    uint32_t reps = ((readstring[8*i + 7] << 24)
+                                     | (readstring[8*i + 6] << 16)
+                                     | (readstring[8*i + 5] << 8)
+                                     | (readstring[8*i + 4]));
+                    uint32_t half_period = ((readstring[8*i + 3] << 24)
+                                            | (readstring[8*i + 2] << 16)
+                                            | (readstring[8*i + 1] << 8)
+                                            | (readstring[8*i + 0]));
+
+                    if (reps == 0)
+                    {
+                        // This indicates either a stop or a wait instruction
+                        instructions[address_offset + addr * 2] = 0;
+                        if (half_period == 0)
+                        {
+                            // It's a stop instruction
+                            instructions[address_offset + addr * 2 + 1] = 0;
+                            addr++;
+                        }
+                        else if (half_period >= 6)
+                        {
+                            // It's a wait instruction. See "set" command for why we do this.
+                            instructions[address_offset + addr * 2 + 1] = (half_period - 4) / 2;
+                            addr++;
+                        }
+                    else
+                        {
+                            reps_error_count++;
+                            last_reps_error_idx = (address_offset + addr * 2 + 1) / 2;
+                        }
+                    }
+                    else if (half_period < (non_loop_path_length))
+                    {
+                        fast_serial_printf("half-period too short\r\n");
+                        half_period_error_count++;
+                        last_half_period_error_idx = (address_offset + addr * 2 + 1) / 2;
+                    }
+                    else
+                    {
+                        instructions[address_offset + addr * 2] = reps;
+                        instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
+                        addr++;
+                    }
+                }
+                inst_count -= inst_per_buffer;
+            }
+            // In this if statement, we read a final serial buffer and load it into instructions.
+            if(inst_count > 0)
             {
-                uint32_t reps = ((readstring[8*i + 7] << 24)
-                                 | (readstring[8*i + 6] << 16)
-                                 | (readstring[8*i + 5] << 8)
-                                 | (readstring[8*i + 4]));
-                uint32_t half_period = ((readstring[8*i + 3] << 24)
-                                        | (readstring[8*i + 2] << 16)
-                                        | (readstring[8*i + 1] << 8)
-                                        | (readstring[8*i + 0]));
-
-                if (reps == 0)
+                fast_serial_read(readstring, 8*inst_count);
+                for(int i = 0; i < inst_count; i++)
                 {
-                    // This indicates either a stop or a wait instruction
-                    instructions[address_offset + addr * 2] = 0;
-                    if (half_period == 0)
+                    uint32_t reps = ((readstring[8*i + 7] << 24)
+                                     | (readstring[8*i + 6] << 16)
+                                     | (readstring[8*i + 5] << 8)
+                                     | (readstring[8*i + 4]));
+                    uint32_t half_period = ((readstring[8*i + 3] << 24)
+                                            | (readstring[8*i + 2] << 16)
+                                            | (readstring[8*i + 1] << 8)
+                                            | (readstring[8*i + 0]));
+
+                    if (reps == 0)
                     {
-                        // It's a stop instruction
-                        instructions[address_offset + addr * 2 + 1] = 0;
-                        addr++;
+                        // This indicates either a stop or a wait instruction
+                        instructions[address_offset + addr * 2] = 0;
+                        if (half_period == 0)
+                        {
+                            // It's a stop instruction
+                            instructions[address_offset + addr * 2 + 1] = 0;
+                            addr++;
+                        }
+                        else if (half_period >= 6)
+                        {
+                            // It's a wait instruction. See "set" command for why we do this.
+                            instructions[address_offset + addr * 2 + 1] = (half_period - 4) / 2;
+                            addr++;
+                        }
+                        else
+                        {
+                            reps_error_count++;
+                            last_reps_error_idx = (address_offset + addr * 2 + 1) / 2;
+                        }
                     }
-                    else if (half_period >= 6)
+                    else if (half_period < (non_loop_path_length))
                     {
-                        // It's a wait instruction. See "set" command for why we do this.
-                        instructions[address_offset + addr * 2 + 1] = (half_period - 4) / 2;
-                        addr++;
+                        half_period_error_count++;
+                        last_half_period_error_idx = (address_offset + addr * 2 + 1) / 2;
+                        fast_serial_printf("half-period too short\r\n");
                     }
                     else
                     {
-                        fast_serial_printf("invalid request\r\n");
+                        instructions[address_offset + addr * 2] = reps;
+                        instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
+                        addr++;
                     }
                 }
-                else if (half_period < (non_loop_path_length))
-                {
-                    fast_serial_printf("half-period too short\r\n");
-                }
-                else if (reps < 1)
-                {
-                    fast_serial_printf("reps must be at least one\r\n");
-                }
-                else
-                {
-                    instructions[address_offset + addr * 2] = reps;
-                    instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
-                    addr++;
-                }
             }
-            inst_count -= inst_per_buffer;
-        }
-        // In this if statement, we read a final serial buffer and load it into instructions.
-        if(inst_count > 0){
-            fast_serial_read(readstring, 8*inst_count);
-            for(int i = 0; i < inst_count; i++){
-                uint32_t reps = ((readstring[8*i + 7] << 24)
-                                 | (readstring[8*i + 6] << 16)
-                                 | (readstring[8*i + 5] << 8)
-                                 | (readstring[8*i + 4]));
-                uint32_t half_period = ((readstring[8*i + 3] << 24)
-                                        | (readstring[8*i + 2] << 16)
-                                        | (readstring[8*i + 1] << 8)
-                                        | (readstring[8*i + 0]));
+            if (reps_error_count == 0 && half_period_error_count == 0)
+            {
+                fast_serial_printf("ok\r\n");
+            }
+            else
+            {
+                if (reps_error_count > 0)
+                {
+                    fast_serial_printf("Invalid half-period for wait in %d instructions, most recent error at instruction %d. Skipping these instructions.\r\n", reps_error_count, last_reps_error_idx);
+                }
+                if (reps_error_count > 0)
+                {
+                    fast_serial_printf("Too short half-period in %d instructions, most recent error at instruction %d. Skipping these instructions.\r\n", half_period_error_count, last_half_period_error_idx);
 
-                if (reps == 0)
-                {
-                    // This indicates either a stop or a wait instruction
-                    instructions[address_offset + addr * 2] = 0;
-                    if (half_period == 0)
-                    {
-                        // It's a stop instruction
-                        instructions[address_offset + addr * 2 + 1] = 0;
-                        addr++;
-                    }
-                    else if (half_period >= 6)
-                    {
-                        // It's a wait instruction. See "set" command for why we do this.
-                        instructions[address_offset + addr * 2 + 1] = (half_period - 4) / 2;
-                        addr++;
-                    }
-                    else
-                    {
-                        fast_serial_printf("invalid request\r\n");
-                    }
-                }
-                else if (half_period < (non_loop_path_length))
-                {
-                    fast_serial_printf("half-period too short\r\n");
-                }
-                else if (reps < 1)
-                {
-                    fast_serial_printf("reps must be at least one\r\n");
-                }
-                else
-                {
-                    instructions[address_offset + addr * 2] = reps;
-                    instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
-                    addr++;
                 }
             }
         }
-        fast_serial_printf("ok\r\n");
     }
     else if (strncmp(readstring, "go high", 7) == 0)
     {

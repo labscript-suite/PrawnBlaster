@@ -35,7 +35,7 @@ uint32_t fast_serial_read(const char * buffer, uint32_t buffer_size){
 // Read bytes until terminator reached (blocks until terminator or buffer_size is reached)
 uint32_t fast_serial_read_until(char * buffer, uint32_t buffer_size, char until){
 	uint32_t buffer_idx = 0;
-	while(buffer_idx < buffer_size){
+	while(buffer_idx < buffer_size - 1){
 		while(fast_serial_read_available() > 0){
 			int32_t next_char = tud_cdc_read_char();
 
@@ -51,6 +51,7 @@ uint32_t fast_serial_read_until(char * buffer, uint32_t buffer_size, char until)
 		}
 		fast_serial_task();
 	}
+	buffer[buffer_idx] = '\0'; // Null terminate string
 	return buffer_idx;
 }
 

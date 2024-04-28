@@ -46,6 +46,7 @@ static inline uint32_t fast_serial_read_atomic(char * buffer, uint32_t buffer_si
 uint32_t fast_serial_read(const char * buffer, uint32_t buffer_size);
 
 // Read bytes until terminator reached (blocks until terminator or buffer_size is reached)
+// Adds null terminator to buffer after read completes (reserving one byte in buffer for this)
 uint32_t fast_serial_read_until(char * buffer, uint32_t buffer_size, char until);
 
 // Clear read FIFO (without reading it)
