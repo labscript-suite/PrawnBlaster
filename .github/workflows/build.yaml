@@ -1,7 +1,7 @@
 name: Build firmware
 
 on:
-  create:
+  push:
     tags:
       - '[0-9]+\.[0-9]+\.[0-9]+*'
   pull_request:
@@ -13,7 +13,7 @@ jobs:
     name: Build firmware
     steps:
       - name: Check out this repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Build Docker image
         run: docker compose build --pull --build-arg APT_MIRROR="http://azure.archive.ubuntu.com/ubuntu/"
@@ -28,7 +28,7 @@ jobs:
           path: build/prawnblaster/*.uf2
 
       - name: Create release
-        if: ${{ github.event.ref_type == 'tag' }}
+        if: (github.event_name == 'push' && contains(github.ref, '/tags'))
         uses: "marvinpinto/action-automatic-releases@latest"
         with:
           repo_token: "${{ secrets.GITHUB_TOKEN }}"
