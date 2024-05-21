@@ -18,11 +18,11 @@
 #######################################################################
 */
 
-#include <stdio.h>
 #include <string.h>
 
 #include "pico/stdlib.h"
 #include "pico/multicore.h"
+#include "pico/bootrom.h"
 #include "hardware/dma.h"
 #include "hardware/pio.h"
 #include "hardware/pll.h"
@@ -32,10 +32,14 @@
 
 #include "pseudoclock.pio.h"
 
+extern "C"{
+#include "fast_serial.h"
+}
+
 #ifndef PRAWNBLASTER_OVERCLOCK
-const char VERSION[16] = "1.0.1";
+const char VERSION[16] = "1.1.0";
 #else
-const char VERSION[16] = "1.0.1-overclock";
+const char VERSION[16] = "1.1.0-overclock";
 #endif //PRAWNBLASTER_OVERCLOCK
 
 int DEBUG;
@@ -48,7 +52,8 @@ unsigned int instructions[60008];
 // max_waits + 4
 unsigned int waits[404];
 
-char readstring[256] = "";
+#define SERIAL_BUFFER_SIZE 256
+char readstring[SERIAL_BUFFER_SIZE] = "";
 // This contains the number of clock cycles for a half period, which is currently 5 (there are 5 ASM instructions)
 const unsigned int non_loop_path_length = 5;
 
@@ -156,7 +161,7 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
         {
             // Divide by 2 to put it back in terms of "half_period reps" instructions
             // Subtract off two to remove the stop instruction from the count
-            printf("Too many instructions to send to pseudoclock %d (%d > %d)\n", config->sm, (words_to_send - 2) / 2, max_words / 2);
+            fast_serial_printf("Too many instructions to send to pseudoclock %d (%d > %d)\r\n", config->sm, (words_to_send - 2) / 2, max_words / 2);
         }
         return false;
     }
@@ -167,7 +172,7 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
         if (DEBUG)
         {
             // subtract off one to remove the stop instruction from the wait count
-            printf("Too many waits to send to pseudoclock %d (%d > %d)\n", config->sm, wait_count - 1, max_waits_per_pseudoclock);
+            fast_serial_printf("Too many waits to send to pseudoclock %d (%d > %d)\r\n", config->sm, wait_count - 1, max_waits_per_pseudoclock);
         }
         return false;
     }
@@ -180,7 +185,7 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
 
         if (DEBUG)
         {
-            printf("Pseudoclock %d has no instructions. It will not run this time.\n", config->sm);
+            fast_serial_printf("Pseudoclock %d has no instructions. It will not run this time.\r\n", config->sm);
         }
 
         return true;
@@ -193,7 +198,7 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
         //      Subtract off two to remove the stop instruction from the count
         // wait count:
         //      subtract off one to remove the stop instruction from the wait count
-        printf("Will send %d instructions containing %d waits to pseudoclock %d\n", (words_to_send - 2) / 2, wait_count - 1, config->sm);
+        fast_serial_printf("Will send %d instructions containing %d waits to pseudoclock %d\r\n", (words_to_send - 2) / 2, wait_count - 1, config->sm);
     }
 
     // Claim the POI
@@ -352,12 +357,12 @@ void free_pseudoclock_pio_sm(pseudoclock_config *config)
         // Drain the FIFOs
         if (DEBUG)
         {
-            printf("Draining instruction FIFO\n");
+            fast_serial_printf("Draining instruction FIFO\r\n");
         }
         pio_sm_drain_tx_fifo(config->pio, config->sm);
         if (DEBUG)
         {
-            printf("Draining wait FIFO\n");
+            fast_serial_printf("Draining wait FIFO\r\n");
         }
         // drain rx fifo
         while (pio_sm_get_rx_fifo_level(config->pio, config->sm) > 0)
@@ -366,7 +371,7 @@ void free_pseudoclock_pio_sm(pseudoclock_config *config)
         }
         if (DEBUG)
         {
-            printf("Pseudoclock program aborted\n");
+            fast_serial_printf("Pseudoclock program aborted\r\n");
         }
     }
 
@@ -376,7 +381,7 @@ void free_pseudoclock_pio_sm(pseudoclock_config *config)
 
     if (DEBUG)
     {
-        printf("Draining TX FIFO\n");
+        fast_serial_printf("Draining TX FIFO\r\n");
     }
     // drain the tx FIFO to be safe
     pio_sm_drain_tx_fifo(config->pio, config->sm);
@@ -542,7 +547,7 @@ void core1_entry()
             {
                 if (DEBUG)
                 {
-                    printf("Failed to configure pseudoclock %d\n. Aborting.", i);
+                    fast_serial_printf("Failed to configure pseudoclock %d\r\n. Aborting.", i);
                 }
                 break;
             }
@@ -561,7 +566,7 @@ void core1_entry()
             set_status(ABORTED);
             if (DEBUG)
             {
-                printf("Core1 loop ended\n");
+                fast_serial_printf("Core1 loop ended\r\n");
             }
             continue;
         }
@@ -590,7 +595,7 @@ void core1_entry()
                 {
                     if (DEBUG)
                     {
-                        printf("Tight loop for pseudoclock %d beginning\n", i);
+                        fast_serial_printf("Tight loop for pseudoclock %d beginning\r\n", i);
                     }
                     while (dma_channel_is_busy(pseudoclock_configs[i].instructions_dma_channel) && get_status() != ABORT_REQUESTED)
                     {
@@ -598,7 +603,7 @@ void core1_entry()
                     }
                     if (DEBUG)
                     {
-                        printf("Tight loop for pseudoclock waits %d beginning\n", i);
+                        fast_serial_printf("Tight loop for pseudoclock waits %d beginning\r\n", i);
                     }
                     while (dma_channel_is_busy(pseudoclock_configs[i].waits_dma_channel) && get_status() != ABORT_REQUESTED)
                     {
@@ -606,7 +611,7 @@ void core1_entry()
                     }
                     if (DEBUG)
                     {
-                        printf("Tight loops done for pseudoclock %d\n", i);
+                        fast_serial_printf("Tight loops done for pseudoclock %d\r\n", i);
                     }
                 }
             }
@@ -621,7 +626,7 @@ void core1_entry()
         {
             if (DEBUG)
             {
-                printf("Aborting pseudoclock program\n");
+                fast_serial_printf("Aborting pseudoclock program\r\n");
             }
 
             set_status(ABORTING);
@@ -631,7 +636,7 @@ void core1_entry()
         {
             if (DEBUG)
             {
-                printf("Pseudoclock program complete\n");
+                fast_serial_printf("Pseudoclock program complete\r\n");
             }
 
             set_status(TRANSITION_TO_STOP);
@@ -658,48 +663,7 @@ void core1_entry()
 
         if (DEBUG)
         {
-            printf("Core1 loop ended\n");
-        }
-    }
-}
-
-void readline()
-{
-    int i = 0;
-    char c;
-    int crfound = 0;
-    while (true)
-    {
-        char c = getchar();
-        if (c == '\r')
-        {
-            crfound = 1;
-        }
-        else if (c == '\n')
-        {
-            if (crfound == 1)
-            {
-                readstring[i] = '\0';
-                return;
-            }
-            else
-            {
-                readstring[i] = '\n';
-                i++;
-            }
-        }
-        else if (crfound)
-        {
-            crfound = 0;
-            readstring[i] = '\r';
-            i++;
-            readstring[i] = c;
-            i++;
-        }
-        else
-        {
-            readstring[i] = c;
-            i++;
+            fast_serial_printf("Core1 loop ended\r\n");
         }
     }
 }
@@ -732,14 +696,14 @@ void measure_freqs(void)
     uint f_clk_adc = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_ADC);
     uint f_clk_rtc = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_RTC);
 
-    printf("pll_sys = %dkHz\n", f_pll_sys);
-    printf("pll_usb = %dkHz\n", f_pll_usb);
-    printf("rosc = %dkHz\n", f_rosc);
-    printf("clk_sys = %dkHz\n", f_clk_sys);
-    printf("clk_peri = %dkHz\n", f_clk_peri);
-    printf("clk_usb = %dkHz\n", f_clk_usb);
-    printf("clk_adc = %dkHz\n", f_clk_adc);
-    printf("clk_rtc = %dkHz\n", f_clk_rtc);
+    fast_serial_printf("pll_sys = %dkHz\r\n", f_pll_sys);
+    fast_serial_printf("pll_usb = %dkHz\r\n", f_pll_usb);
+    fast_serial_printf("rosc = %dkHz\r\n", f_rosc);
+    fast_serial_printf("clk_sys = %dkHz\r\n", f_clk_sys);
+    fast_serial_printf("clk_peri = %dkHz\r\n", f_clk_peri);
+    fast_serial_printf("clk_usb = %dkHz\r\n", f_clk_usb);
+    fast_serial_printf("clk_adc = %dkHz\r\n", f_clk_adc);
+    fast_serial_printf("clk_rtc = %dkHz\r\n", f_clk_rtc);
 }
 
 void resus_callback(void)
@@ -753,50 +717,40 @@ void resus_callback(void)
 
     // update clock status
     clock_status = INTERNAL;
-
-    // Reconfigure uart as clocks have changed
-    stdio_init_all();
-    if (DEBUG)
-    {
-        printf("Resus event fired\n");
-    }
-
-    // Wait for uart output to finish
-    uart_default_tx_wait_blocking();
 }
 
 void loop()
 {
-    readline();
+    fast_serial_read_until(readstring, 256, '\n');
     int local_status = get_status();
     if (strncmp(readstring, "version", 7) == 0)
     {
-        printf("version: %s\n", VERSION);
+        fast_serial_printf("version: %s\r\n", VERSION);
     }
     else if (strncmp(readstring, "status", 6) == 0)
     {
-        printf("run-status:%d clock-status:%d\n", local_status, clock_status);
+        fast_serial_printf("run-status:%d clock-status:%d\r\n", local_status, clock_status);
     }
     else if (strncmp(readstring, "debug on", 8) == 0)
     {
         DEBUG = 1;
-        printf("ok\n");
+        fast_serial_printf("ok\r\n");
     }
     else if (strncmp(readstring, "debug off", 9) == 0)
     {
         DEBUG = 0;
-        printf("ok\n");
+        fast_serial_printf("ok\r\n");
     }
     else if (strncmp(readstring, "getfreqs", 8) == 0)
     {
         measure_freqs();
-        printf("ok\n");
+        fast_serial_printf("ok\r\n");
     }
     else if (strncmp(readstring, "abort", 5) == 0)
     {
         if (local_status != RUNNING && local_status != TRANSITION_TO_RUNNING)
         {
-            printf("Can only abort when status is 1 or 2 (transitioning to running or running)");
+            fast_serial_printf("Can only abort when status is 1 or 2 (transitioning to running or running)\r\n");
         }
         else
         {
@@ -809,7 +763,7 @@ void loop()
                 gpio_put(OUT_PINS[i], 0);
             }
             // Should be done!
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
     }
     else if (strncmp(readstring, "getwait", 7) == 0)
@@ -820,19 +774,19 @@ void loop()
         int waits_per_pseudoclock = (max_waits / num_pseudoclocks_in_use) + 1;
         if (parsed < 2)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else if (addr >= waits_per_pseudoclock)
         {
-            printf("invalid address\n");
+            fast_serial_printf("invalid address\r\n");
         }
         else if (addr >= get_num_processed_waits(pseudoclock))
         {
-            printf("wait not yet available\n");
+            fast_serial_printf("wait not yet available\r\n");
         }
         else
         {
@@ -848,13 +802,13 @@ void loop()
                 // We multiply by two here to counteract the divide by two when storing (see below)
                 wait_remaining *= 2;
             }
-            printf("%u\n", wait_remaining);
+            fast_serial_printf("%u\r\n", wait_remaining);
         }
     }
     // Prevent manual mode commands from running during buffered execution
     else if (local_status != ABORTED && local_status != STOPPED)
     {
-        printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0 or 5 (stopped or aborted).\n", readstring);
+        fast_serial_printf("Cannot execute command %s during buffered execution. Check status first and wait for it to return 0 or 5 (stopped or aborted).\r\n", readstring);
     }
     // Set number of pseudoclocks
     else if (strncmp(readstring, "setnumpseudoclocks", 17) == 0)
@@ -863,11 +817,11 @@ void loop()
         int parsed = sscanf(readstring, "%*s %u %u", &num_pseudoclocks);
         if (parsed < 1)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (num_pseudoclocks < 1 || num_pseudoclocks > 4)
         {
-            printf("The number of pseudoclocks must be between 1 and 4 (inclusive)\n");
+            fast_serial_printf("The number of pseudoclocks must be between 1 and 4 (inclusive)\r\n");
         }
         else
         {
@@ -885,7 +839,7 @@ void loop()
                 instructions[i] = 0;
             }
             num_pseudoclocks_in_use = num_pseudoclocks;
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
     }
     else if (strncmp(readstring, "setinpin", 8) == 0)
@@ -895,28 +849,28 @@ void loop()
         int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &pin_no);
         if (parsed < 2)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else if (pin_no == OUT_PINS[0] || pin_no == OUT_PINS[1] || pin_no == OUT_PINS[2] || pin_no == OUT_PINS[3])
         {
-            printf("IN pin cannot be the same as one of the OUT pins\n");
+            fast_serial_printf("IN pin cannot be the same as one of the OUT pins\r\n");
         }
         else if (pin_no < 0 || pin_no > 19)
         {
-            printf("IN pin must be between 0 and 19 (inclusive)\n");
+            fast_serial_printf("IN pin must be between 0 and 19 (inclusive)\r\n");
         }
         else if (pin_no == IN_PINS[pseudoclock])
         {
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
         else
         {
             IN_PINS[pseudoclock] = pin_no;
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
     }
     else if (strncmp(readstring, "setoutpin", 9) == 0)
@@ -926,32 +880,32 @@ void loop()
         int parsed = sscanf(readstring, "%*s %u %u", &pseudoclock, &pin_no);
         if (parsed < 2)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else if (pin_no == IN_PINS[0] || pin_no == IN_PINS[1] || pin_no == IN_PINS[2] || pin_no == IN_PINS[3])
         {
-            printf("OUT pin cannot be the same as one of the IN pins\n");
+            fast_serial_printf("OUT pin cannot be the same as one of the IN pins\r\n");
         }
         else if (pin_no != 25 && (pin_no < 0 || pin_no > 19))
         {
-            printf("OUT pin must be between 0 and 19 (inclusive) or 25 (LED for debugging)\n");
+            fast_serial_printf("OUT pin must be between 0 and 19 (inclusive) or 25 (LED for debugging)\r\n");
         }
         else if (pin_no == OUT_PINS[pseudoclock])
         {
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
         else if (pin_no == OUT_PINS[0] || pin_no == OUT_PINS[1] || pin_no == OUT_PINS[2] || pin_no == OUT_PINS[3])
         {
-            printf("OUT pin cannot be the same as one of the other OUT pins\n");
+            fast_serial_printf("OUT pin cannot be the same as one of the other OUT pins\r\n");
         }
         else
         {
             OUT_PINS[pseudoclock] = pin_no;
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
     }
     else if (strncmp(readstring, "getoutpin", 9) == 0)
@@ -960,21 +914,21 @@ void loop()
         int parsed = sscanf(readstring, "%*s %u", &pseudoclock);
         if (parsed < 1)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else
         {
             if (OUT_PINS[pseudoclock] == INVALID_PIN_NUMBER)
             {
-                printf("default\n");
+                fast_serial_printf("default\r\n");
             }
             else
             {
-                printf("%u\n", OUT_PINS[pseudoclock]);
+                fast_serial_printf("%u\r\n", OUT_PINS[pseudoclock]);
             }
         }
     }
@@ -984,21 +938,21 @@ void loop()
         int parsed = sscanf(readstring, "%*s %u", &pseudoclock);
         if (parsed < 1)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else
         {
             if (IN_PINS[pseudoclock] == INVALID_PIN_NUMBER)
             {
-                printf("default\n");
+                fast_serial_printf("default\r\n");
             }
             else
             {
-                printf("%u\n", IN_PINS[pseudoclock]);
+                fast_serial_printf("%u\r\n", IN_PINS[pseudoclock]);
             }
         }
     }
@@ -1009,17 +963,17 @@ void loop()
         int parsed = sscanf(readstring, "%*s %u %u", &src, &freq);
         if (parsed < 2)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else
         {
             if (DEBUG)
             {
-                printf("Got request mode=%u, freq=%u MHz\n", src, freq / MHZ);
+                fast_serial_printf("Got request mode=%u, freq=%u MHz\r\n", src, freq / MHZ);
             }
             if (src > 2)
             {
-                printf("invalid request\n");
+                fast_serial_printf("invalid request\r\n");
             }
             else
             {
@@ -1028,7 +982,7 @@ void loop()
                 // Do validation checking on values provided
                 if (freq > 133 * MHZ)
                 {
-                    printf("Invalid clock frequency specified\n");
+                    fast_serial_printf("Invalid clock frequency specified\r\n");
                     return;
                 }
 #endif //PRAWNBLASTER_OVERCLOCK
@@ -1038,12 +992,12 @@ void loop()
                 {
                     if (set_sys_clock_khz(freq / 1000, false))
                     {
-                        printf("ok\n");
+                        fast_serial_printf("ok\r\n");
                         clock_status = INTERNAL;
                     }
                     else
                     {
-                        printf("Failure. Cannot exactly achieve that clock frequency.");
+                        fast_serial_printf("Failure. Cannot exactly achieve that clock frequency.\r\n");
                     }
                 }
                 else
@@ -1051,7 +1005,7 @@ void loop()
                     clock_configure_gpin(clk_sys, (src == 2 ? 22 : 20), freq, freq);
                     // update clock status
                     clock_status = EXTERNAL;
-                    printf("ok\n");
+                    fast_serial_printf("ok\r\n");
                 }
             }
         }
@@ -1062,16 +1016,16 @@ void loop()
         int parsed = sscanf(readstring, "%*s %u", &core);
         if (parsed < 1)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (core != 0 && core != 1)
         {
-            printf("You must specify either 0 for PIO0 or 1 for PIO1\n");
+            fast_serial_printf("You must specify either 0 for PIO0 or 1 for PIO1\r\n");
         }
         else
         {
             pio_to_use = core == 0 ? pio0 : pio1;
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
@@ -1088,7 +1042,7 @@ void loop()
         set_status(TRANSITION_TO_RUNNING);
         // update gpio inited status
         gpio_inited = 0;
-        printf("ok\n");
+        fast_serial_printf("ok\r\n");
     }
     else if ((strncmp(readstring, "start", 5) == 0))
     {
@@ -1104,7 +1058,7 @@ void loop()
         set_status(TRANSITION_TO_RUNNING);
         // update gpio inited status
         gpio_inited = 0;
-        printf("ok\n");
+        fast_serial_printf("ok\r\n");
     }
     // TODO: update this to support pseudoclock selection
     else if (strncmp(readstring, "set ", 4) == 0)
@@ -1117,15 +1071,15 @@ void loop()
         int address_offset = pseudoclock * (max_instructions * 2 / num_pseudoclocks_in_use + 2);
         if (parsed < 4)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else if (addr >= max_instructions)
         {
-            printf("invalid address\n");
+            fast_serial_printf("invalid address\r\n");
         }
         else if (reps == 0)
         {
@@ -1135,7 +1089,7 @@ void loop()
             {
                 // It's a stop instruction
                 instructions[address_offset + addr * 2 + 1] = 0;
-                printf("ok\n");
+                fast_serial_printf("ok\r\n");
             }
             else if (half_period >= 6)
             {
@@ -1146,26 +1100,26 @@ void loop()
                 // the timeout is accurate.
                 // The wait loop conatins two ASM instructions, so we divide by 2 here.
                 instructions[address_offset + addr * 2 + 1] = (half_period - 4) / 2;
-                printf("ok\n");
+                fast_serial_printf("ok\r\n");
             }
             else
             {
-                printf("invalid request\n");
+                fast_serial_printf("invalid request\r\n");
             }
         }
         else if (half_period < (non_loop_path_length))
         {
-            printf("half-period too short\n");
+            fast_serial_printf("half-period too short\r\n");
         }
         else if (reps < 1)
         {
-            printf("reps must be at least one\n");
+            fast_serial_printf("reps must be at least one\r\n");
         }
         else
         {
             instructions[address_offset + addr * 2] = reps;
             instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
     }
     else if (strncmp(readstring, "get ", 4) == 0)
@@ -1176,15 +1130,15 @@ void loop()
         int address_offset = pseudoclock * (max_instructions * 2 / num_pseudoclocks_in_use + 2);
         if (parsed < 2)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else if (addr >= max_instructions)
         {
-            printf("invalid address\n");
+            fast_serial_printf("invalid address\r\n");
         }
         else
         {
@@ -1205,7 +1159,159 @@ void loop()
                     half_period += 4;
                 }
             }
-            printf("%u %u\n", half_period, reps);
+            fast_serial_printf("%u %u\r\n", half_period, reps);
+        }
+    }
+    else if (strncmp(readstring, "setb ", 5) == 0)
+    {
+        // set a large block of instructions encoded in a binary blob of fixed length.
+        unsigned int start_addr;
+        unsigned int inst_count;
+        unsigned int pseudoclock;
+        int parsed = sscanf(readstring, "%*s %u %u %u", &pseudoclock, &start_addr, &inst_count);
+        int address_offset = pseudoclock * (max_instructions * 2 / num_pseudoclocks_in_use + 2);
+        if (parsed < 3)
+        {
+            fast_serial_printf("invalid request\n");
+        }
+        else if (pseudoclock < 0 || pseudoclock > 3)
+        {
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
+        }
+        else if (start_addr + inst_count >= max_instructions)
+        {
+            fast_serial_printf("Invalid address and/or too many instructions (%d + %d).\r\n", start_addr, inst_count);
+        }
+        else
+        {
+            fast_serial_printf("ready\r\n");
+            // It takes 8 bytes to describe an instruction: 4 bytes for reps, 4 bytes for half period
+            uint32_t inst_per_buffer = SERIAL_BUFFER_SIZE / 8;
+            unsigned int addr = start_addr;
+
+            // Variables to track errors
+            uint32_t reps_error_count = 0;
+            uint32_t last_reps_error_idx = 0;
+            uint32_t half_period_error_count = 0;
+            uint32_t last_half_period_error_idx = 0;
+
+            while(inst_count > inst_per_buffer){
+                fast_serial_read(readstring, 8*inst_per_buffer);
+                for (int i = 0; i < inst_per_buffer; i++)
+                {
+                    uint32_t reps = ((readstring[8*i + 7] << 24)
+                                     | (readstring[8*i + 6] << 16)
+                                     | (readstring[8*i + 5] << 8)
+                                     | (readstring[8*i + 4]));
+                    uint32_t half_period = ((readstring[8*i + 3] << 24)
+                                            | (readstring[8*i + 2] << 16)
+                                            | (readstring[8*i + 1] << 8)
+                                            | (readstring[8*i + 0]));
+
+                    if (reps == 0)
+                    {
+                        // This indicates either a stop or a wait instruction
+                        instructions[address_offset + addr * 2] = 0;
+                        if (half_period == 0)
+                        {
+                            // It's a stop instruction
+                            instructions[address_offset + addr * 2 + 1] = 0;
+                            addr++;
+                        }
+                        else if (half_period >= 6)
+                        {
+                            // It's a wait instruction. See "set" command for why we do this.
+                            instructions[address_offset + addr * 2 + 1] = (half_period - 4) / 2;
+                            addr++;
+                        }
+                    else
+                        {
+                            reps_error_count++;
+                            last_reps_error_idx = (address_offset + addr * 2 + 1) / 2;
+                        }
+                    }
+                    else if (half_period < (non_loop_path_length))
+                    {
+                        fast_serial_printf("half-period too short\r\n");
+                        half_period_error_count++;
+                        last_half_period_error_idx = (address_offset + addr * 2 + 1) / 2;
+                    }
+                    else
+                    {
+                        instructions[address_offset + addr * 2] = reps;
+                        instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
+                        addr++;
+                    }
+                }
+                inst_count -= inst_per_buffer;
+            }
+            // In this if statement, we read a final serial buffer and load it into instructions.
+            if(inst_count > 0)
+            {
+                fast_serial_read(readstring, 8*inst_count);
+                for(int i = 0; i < inst_count; i++)
+                {
+                    uint32_t reps = ((readstring[8*i + 7] << 24)
+                                     | (readstring[8*i + 6] << 16)
+                                     | (readstring[8*i + 5] << 8)
+                                     | (readstring[8*i + 4]));
+                    uint32_t half_period = ((readstring[8*i + 3] << 24)
+                                            | (readstring[8*i + 2] << 16)
+                                            | (readstring[8*i + 1] << 8)
+                                            | (readstring[8*i + 0]));
+
+                    if (reps == 0)
+                    {
+                        // This indicates either a stop or a wait instruction
+                        instructions[address_offset + addr * 2] = 0;
+                        if (half_period == 0)
+                        {
+                            // It's a stop instruction
+                            instructions[address_offset + addr * 2 + 1] = 0;
+                            addr++;
+                        }
+                        else if (half_period >= 6)
+                        {
+                            // It's a wait instruction. See "set" command for why we do this.
+                            instructions[address_offset + addr * 2 + 1] = (half_period - 4) / 2;
+                            addr++;
+                        }
+                        else
+                        {
+                            reps_error_count++;
+                            last_reps_error_idx = (address_offset + addr * 2 + 1) / 2;
+                        }
+                    }
+                    else if (half_period < (non_loop_path_length))
+                    {
+                        half_period_error_count++;
+                        last_half_period_error_idx = (address_offset + addr * 2 + 1) / 2;
+                        fast_serial_printf("half-period too short\r\n");
+                    }
+                    else
+                    {
+                        instructions[address_offset + addr * 2] = reps;
+                        instructions[address_offset + addr * 2 + 1] = half_period - non_loop_path_length;
+                        addr++;
+                    }
+                }
+            }
+            if (reps_error_count == 0 && half_period_error_count == 0)
+            {
+                fast_serial_printf("ok\r\n");
+            }
+            else
+            {
+                if (reps_error_count > 0)
+                {
+                    fast_serial_printf("Invalid half-period for wait in %d instructions, most recent error at instruction %d. Skipping these instructions.\r\n", reps_error_count, last_reps_error_idx);
+                }
+                if (reps_error_count > 0)
+                {
+                    fast_serial_printf("Too short half-period in %d instructions, most recent error at instruction %d. Skipping these instructions.\r\n", half_period_error_count, last_half_period_error_idx);
+
+                }
+            }
         }
     }
     else if (strncmp(readstring, "go high", 7) == 0)
@@ -1214,17 +1320,17 @@ void loop()
         int parsed = sscanf(readstring, "%*s %*s %u", &pseudoclock);
         if (parsed < 1)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else
         {
             configure_gpio();
             gpio_put(OUT_PINS[pseudoclock], 1);
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
     }
     else if (strncmp(readstring, "go low", 6) == 0)
@@ -1233,22 +1339,26 @@ void loop()
         int parsed = sscanf(readstring, "%*s %*s %u", &pseudoclock);
         if (parsed < 1)
         {
-            printf("invalid request\n");
+            fast_serial_printf("invalid request\r\n");
         }
         else if (pseudoclock < 0 || pseudoclock > 3)
         {
-            printf("The specified pseudoclock must be between 0 and 3 (inclusive)\n");
+            fast_serial_printf("The specified pseudoclock must be between 0 and 3 (inclusive)\r\n");
         }
         else
         {
             configure_gpio();
             gpio_put(OUT_PINS[pseudoclock], 0);
-            printf("ok\n");
+            fast_serial_printf("ok\r\n");
         }
+    }
+    else if (strncmp(readstring, "program", 7) == 0)
+    {
+        reset_usb_boot(0, 0);
     }
     else
     {
-        printf("invalid request: %s\n", readstring);
+        fast_serial_printf("invalid request: %s\r\n", readstring);
     }
 }
 
@@ -1280,7 +1390,7 @@ int main()
     // Temp output 48MHZ clock for debug
     clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_USB, 1);
 
-    stdio_init_all();
+    fast_serial_init();
 
     multicore_launch_core1(core1_entry);
     multicore_fifo_pop_blocking();
