@@ -1,11 +1,30 @@
 name: prawnblaster
 
 services:
-  buildfirmware:
+  firmware_base:
     build:
       dockerfile: docker/Dockerfile
-    command: /bin/bash -c 'cp /pico/pico-sdk/external/pico_sdk_import.cmake /prawnblaster/ && cmake .. && make'
+    image: prawnblaster/build-firmware
     volumes:
       - .:/prawnblaster
-    working_dir: /prawnblaster/build
+    command: /bin/bash -c 'cp /pico/pico-sdk/external/pico_sdk_import.cmake /prawnblaster/'
+    container_name: firmware_base
+
+  build_rp2040_firmware:
+    image: prawnblaster/build-firmware
+    command: /bin/bash -c 'cmake .. -D PICO_PLATFORM=rp2040 && make'
+    volumes:
+      - .:/prawnblaster
+    working_dir: /prawnblaster/build_rp2040
     init: true
+    depends_on:
+      - firmware_base
+  build_rp2350_firmware:
+    image: prawnblaster/build-firmware
+    command: /bin/bash -c 'cmake .. -D PICO_PLATFORM=rp2350 && make'
+    volumes:
+      - .:/prawnblaster
+    working_dir: /prawnblaster/build_rp2350
+    init: true
+    depends_on:
+      - firmware_base

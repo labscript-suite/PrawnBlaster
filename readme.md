@@ -2,6 +2,10 @@
 
 The PrawnBlaster firmware turns the $5 Raspberry Pi Pico microcontroller board into a [_labscript suite_](https://github.com/labscript-suite) pseudoclock device.
 
+The firmware is compatible with both the Pico 2 board (based on the RP2350 chip) and the original Pico board (based on the RP2040 chip).
+**We recommend ensuring you have the [official Pico 2 board](https://www.raspberrypi.com/products/raspberry-pi-pico-2/) with the RP2350 chip for best performance.**
+The [original Pico](https://www.raspberrypi.com/products/raspberry-pi-pico/) (RP2040 chip) supports half the number of instructions and has a slower maximum clock speed.
+
 ## What is a pseudoclock device?
 A pseudoclock is a device that can be programmed to output a variable frequency clock.
 The entire sequence of clock pulses is programmed into internal memory (over serial) and then executed on command (in order to achieve precise timing).
@@ -10,7 +14,7 @@ In the case of the PrawnBlaster, you can program in a series of instructions con
 ## Features/Specifications
 
 * Only costs $5 (a tenth of the cost of the [PineBlaster](https://github.com/labscript-suite/pineblaster)).
-* Support for up to 30000 instructions (4 times the PineBlaster) spread evenly across 1 to 4 independent pseudoclocks (also 4 times the PineBlaster).
+* Support for up to 60000 instructions (8 times the PineBlaster) spread evenly across 1 to 4 independent pseudoclocks (also 4 times the PineBlaster).
 * Each instruction can be repeated up to 4294967295 times (2^32-1).
 * Minimum pulse half-period 50ns (if internal clock running at 100MHz).
 * Maximum pulse half-period ~42.9 seconds (if internal clock running at 100MHz).
@@ -20,15 +24,17 @@ In the case of the PrawnBlaster, you can program in a series of instructions con
 * Support for timeouts on those waits (with maximum length 42.9 seconds).
 * Ability to internally monitor the length of those waits and report them over the serial connection at the end of the instruction execution.
 * Support for indefinite waits until retrigger (Note: the PrawnBlaster will not report the length of indefinite waits).
-* Support for referencing to an external clock source to synchronise with other devices (officially limited to 50MHz on the Pico but testing has shown it works up to 125MHz, see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
+* Support for referencing to an external clock source to synchronise with other devices (officially limited to 50MHz on the Pico but testing has shown it works up to 133MHz, see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
 
 Note 1: The half-period is the time a clock pulse stays high. All clock pulses produced by the PrawnBlaster have a 50-50 duty cycle.
 
-Note 2: The internal clock can be configured to run at up to 133 MHz. We set it to a default of 100 MHz in order to produce nice round numbers.
+Note 2: The internal clock can be configured to run at up to 150 MHz (Pico 2 - RP2350) or 133 MHz (Pico - RP2040). We set it to a default of 100 MHz in order to produce nice round numbers.
 You can increase the clock frequency at runtime (via a serial command) which scales the timing specifications accordingly.
 
+Note 3: The original Pico (RP2040) only supports up to 30000 instructions (4 times the PineBlaster).
+
 ## How to flash the firmware
-Download the latest [prawnblaster.uf2 file](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblaster.uf2).
+Download the latest prawnblaster.uf2 file: [Pico - RP2040](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblaster_rp2040.uf2), [Pico 2 - RP2350](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblaster_rp2350.uf2).
 On your Raspberry Pi Pico, hold down the "bootsel" button while plugging the Pico into USB port on a PC (that must already be turned on).
 The Pico should mount as a mass storage device (if it doesn't, try again or consult the Pico documentation).
 Drag and drop the `.uf2` file into the mounted mass storage device.
@@ -83,7 +89,7 @@ Note: the commands are only read if terminated with `\r\n`.
 * `getinpin <pseudoclock:int>`: Gets the currently set trigger input pin for pseudoclock `pseudoclock`. Returns either an integer corresponding to the set pin or `default` to indicate it will try and use the default pin as defined above for `setinpin`. See FAQ below for more details on what happens if it can't use the default.
 * `getoutpin <pseudoclock:int>`: Gets the currently set trigger output pin for pseudoclock `pseudoclock`. Returns either an integer corresponding to the set pin or `default` to indicate it will use try and use the default pin as defined above for `setoutpin`. See FAQ below for more details on what happens if it can't use the default.
 * `debug <state:str>`: Turns on extra debug messages printed over serial. `state` should be `on` or `off` (no string quotes required).
-* `setpio <core:int>`: Sets whether the PrawnBlaster should use pio0 or pio1 in the RP2040 chip (both have 4 state machines). Defaults to `0` (pio0) on powerup. May be useful if your particular board shows different timing behaviour (on the sub 10ns scale) between the PIO cores and you care about this level of precision. Otherwise you can leave this as the default.
+* `setpio <core:int>`: Sets whether the PrawnBlaster should use pio0, pio1, or pio2 in the RP2040/RP2350 chip (each have 4 state machines). Defaults to `0` (pio0) on powerup. May be useful if your particular board shows different timing behaviour (on the sub 10ns scale) between the PIO cores and you care about this level of precision. Otherwise you can leave this as the default. The RP2040 only supports pio0 and pio1.
 * `program`: Equivalent to disconnecting the Pico, holding down the "bootsel" button, and reconnecting the Pico. Places the Pico into firmware flashing mode; the PrawnBlaster serial port should disappear and the Pico should mount as a mass storage device.
 
 ## Reconfiguring the internal clock.
@@ -91,7 +97,7 @@ The clock frequency (and even source) can be reconfigured at runtime (it is init
 To do this, you send the command `setclock <mode:int> <freq:int>`, where the parameters are:
 
 * mode: `0` means use the internal reference source and PLL. `1` means use an external source (bypassing the PLL) fed in on GPIO 20. `2` means use an external source (bypassing the PLL fed in on GPIO 22).
-* freq: The clock frequency, in Hz (max 133000000).
+* freq: The clock frequency, in Hz (max 133000000 for RP2040 boards and 150000000 for RP2350 boards).
 
 For example, to set the internal frequency to 125 MHz, you would send:
 
@@ -119,7 +125,7 @@ This directly clocks the cores running the PrawnBlaster firmware, so minimum pul
 An external clock of 50MHz means a minimum half-period of `5/50MHz=100ns`.
 An external clock of 100MHz means a minimum half-period of `5/100MHz=50ns`.
 
-Note: Officially, the documentation for the Pico says external clock sources can only be up to 50MHz. We have successfully tested up to 125MHz (see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
+Note: Officially, the documentation for the Pico says external clock sources can only be up to 50MHz. We have successfully tested up to 133MHz (see [#6](https://github.com/labscript-suite/PrawnBlaster/issues/6)).
 We recommend you personally verify the output of the PrawnBlaster is as expected if running from an external reference above 50MHz.
 
 ## Compiling the firmware
@@ -141,6 +147,12 @@ Just change the git tag of the pico SDK that gets cloned out by git, then rebuil
 Note once the docker container is built, you can run step 5 as many times as you like.
 You do not need to rebuild the container, even if you make changes to the PrawnBlaster source code.
 You only need to rebuild the docker container if you modify the `build/docker/Dockerfile` file.
+
+By default, running `docker compose up` builds the all variations of the firmware.
+If you only want to build for a specific board, run either `docker compose up build_rp2040_firmware` or `docker compose up build_rp2350_firmware`.
+
+The firmware will be located in `build_rp2xxx/prawnblaster/prawnblaster_rp2xxx[_overclock].uf2` where `rp2xxx` will be either `rp2040` or `rp2350`.
+The firmware supporting overclocking will have the `_overclock` suffix.
 
 ## FAQ:
 
@@ -172,7 +184,7 @@ If you want to find out what pins, you should
 
 ### Can I overclock the Pico board?
 Yes, some people have reported being able to significantly overclock their Raspberry Pi Pico boards.
-While we do not recommend you do so (nor will we be liable for any damage to your Pico or attached devices should you overclock it), we have provided a version of the PrawnBlaster firmware with no upper limit to the clock frequency [here](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblasteroverclock.uf2).
+While we do not recommend you do so (nor will we be liable for any damage to your Pico or attached devices should you overclock it), we have provided a version of the PrawnBlaster firmware with no upper limit to the clock frequency here: [pico - RP2040](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblaster_rp2040_overclock.uf2), [pico 2 - RP2350](https://github.com/labscript-suite/PrawnBlaster/releases/latest/download/prawnblaster_rp2350_overclock.uf2)).
 Use at your own risk!
 We provide no support for the overclockable firmware.
 If you need to tweak any other operating parameters of the Pico in order to achieve a stable overclock, you will need to manually modify the firmware source code and recompile it with those changes.
@@ -183,10 +195,12 @@ There are more details in [#5](https://github.com/labscript-suite/PrawnBlaster/i
 
 If you are using the PrawnBlaster outside of the labscript suite, and want each pseudoclock to be triggered by a different GPIO pin, then you should be aware there seems to be a +/-10ns fluctuation in trigger response which may lead pseudoclocks to become out of sync with each other by 20ns per trigger.
 
-### Can I use other RP2040 boards?
+### Can I use other RP2040/RP235x boards?
 Maybe - it depends what pins are available.
+You will also (most likely) need to recompile the firmware for these boards (and may need to adjust build options defined in various configuration files).
 In general it should work as long as it has 9 GPIO pins available for use (and not hardwired to a peripheral) and one of them is pin 20/22.
 Without pin 20 or 22, you can't externally reference the board.
 And with less GPIO pins you can't have 4 independent pseudoclocks each with an independent trigger.
 If you only need 1 trigger, you can get away with 1 pin for a trigger, 1 pin for each pseudoclock output you want (somewhere between 1 and 4) and 1 pin (either GPIO 20 or 22) for externally referencing if you need it.
-But unless you have a strong reason to get another RP2040 based board, we suggest sticking with the standard Pico (Which is usually the cheaper option anyway).
+But unless you have a strong reason to get another RP2040/RP235x based board, we suggest sticking with the standard Rapsberry Pi Pico or Pico 2 (Which is usually the cheaper option anyway).
+As we are a volunteer project, we can only offer minimal support for other potentially compatible boards.

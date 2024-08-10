@@ -37,20 +37,22 @@ extern "C"{
 }
 
 #ifndef PRAWNBLASTER_OVERCLOCK
-const char VERSION[16] = "1.1.0";
+const char VERSION[16] = "1.2.0";
 #else
-const char VERSION[16] = "1.1.0-overclock";
+const char VERSION[16] = "1.2.0-overclock";
 #endif //PRAWNBLASTER_OVERCLOCK
 
 int DEBUG;
 
 // Can't seem to have this be used to define array size even though it's a constant
-const unsigned int max_instructions = 30000;
-const unsigned int max_waits = 400;
+constexpr unsigned int max_instructions = PRAWNBLASTER_NUM_INSTRUCTIONS;
+constexpr unsigned int instruction_array_size = 2 * max_instructions + 8;
+constexpr unsigned int max_waits = 400;
+constexpr unsigned int wait_array_size = max_waits + 4;
 // max_instructions*2 + 8
-unsigned int instructions[60008];
+unsigned int instructions[instruction_array_size];
 // max_waits + 4
-unsigned int waits[404];
+unsigned int waits[wait_array_size];
 
 #define SERIAL_BUFFER_SIZE 256
 char readstring[SERIAL_BUFFER_SIZE] = "";
@@ -246,7 +248,7 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
             break;
         }
     }
-    else
+    else if (pio_to_use == pio1)
     {
         switch (config->sm)
         {
@@ -266,6 +268,28 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
             break;
         }
     }
+#if PRAWNBLASTER_PICO_BOARD == 2
+    else if (pio_to_use == pio2)
+    {
+        switch (config->sm)
+        {
+        case 0:
+            instruction_dreq = DREQ_PIO2_TX0;
+            break;
+        case 1:
+            instruction_dreq = DREQ_PIO2_TX1;
+            break;
+        case 2:
+            instruction_dreq = DREQ_PIO2_TX2;
+            break;
+        case 3:
+            instruction_dreq = DREQ_PIO2_TX3;
+            break;
+        default:
+            break;
+        }
+    }
+#endif
     channel_config_set_dreq(&instruction_c, instruction_dreq);
 
     dma_channel_configure(
@@ -305,7 +329,7 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
             break;
         }
     }
-    else
+    else if (pio_to_use == pio1)
     {
         switch (config->sm)
         {
@@ -325,6 +349,28 @@ bool configure_pseudoclock_pio_sm(pseudoclock_config *config, uint prog_offset, 
             break;
         }
     }
+#if PRAWNBLASTER_PICO_BOARD == 2
+    else if (pio_to_use == pio2)
+    {
+        switch (config->sm)
+        {
+        case 0:
+            waits_dreq = DREQ_PIO2_RX0;
+            break;
+        case 1:
+            waits_dreq = DREQ_PIO2_RX1;
+            break;
+        case 2:
+            waits_dreq = DREQ_PIO2_RX2;
+            break;
+        case 3:
+            waits_dreq = DREQ_PIO2_RX3;
+            break;
+        default:
+            break;
+        }
+    }
+#endif
     channel_config_set_dreq(&waits_c, waits_dreq);
 
     // change the default to increment write address and leave read constant
@@ -694,7 +740,9 @@ void measure_freqs(void)
     uint f_clk_peri = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_PERI);
     uint f_clk_usb = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_USB);
     uint f_clk_adc = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_ADC);
+#ifdef CLOCKS_FC0_SRC_VALUE_CLK_RTC
     uint f_clk_rtc = frequency_count_khz(CLOCKS_FC0_SRC_VALUE_CLK_RTC);
+#endif
 
     fast_serial_printf("pll_sys = %dkHz\r\n", f_pll_sys);
     fast_serial_printf("pll_usb = %dkHz\r\n", f_pll_usb);
@@ -703,7 +751,9 @@ void measure_freqs(void)
     fast_serial_printf("clk_peri = %dkHz\r\n", f_clk_peri);
     fast_serial_printf("clk_usb = %dkHz\r\n", f_clk_usb);
     fast_serial_printf("clk_adc = %dkHz\r\n", f_clk_adc);
+#ifdef CLOCKS_FC0_SRC_VALUE_CLK_RTC
     fast_serial_printf("clk_rtc = %dkHz\r\n", f_clk_rtc);
+#endif
 }
 
 void resus_callback(void)
@@ -723,13 +773,17 @@ void loop()
 {
     fast_serial_read_until(readstring, 256, '\n');
     int local_status = get_status();
-    if (strncmp(readstring, "version", 7) == 0)
+    if (strncmp(readstring, "status", 6) == 0)
+    {
+        fast_serial_printf("run-status:%d clock-status:%d\r\n", local_status, clock_status);
+    }
+    else if (strncmp(readstring, "version", 7) == 0)
     {
         fast_serial_printf("version: %s\r\n", VERSION);
     }
-    else if (strncmp(readstring, "status", 6) == 0)
+    else if (strncmp(readstring, "board", 5) == 0)
     {
-        fast_serial_printf("run-status:%d clock-status:%d\r\n", local_status, clock_status);
+        fast_serial_printf("board: pico%d\r\n", PRAWNBLASTER_PICO_BOARD);
     }
     else if (strncmp(readstring, "debug on", 8) == 0)
     {
@@ -959,7 +1013,7 @@ void loop()
     else if (strncmp(readstring, "setclock", 8) == 0)
     {
         unsigned int src;  // 0 = internal, 1=GPIO pin 20, 2=GPIO pin 22
-        unsigned int freq; // in Hz (up to 133 MHz)
+        unsigned int freq; // in Hz (up to 133 or 150 MHz depending on board)
         int parsed = sscanf(readstring, "%*s %u %u", &src, &freq);
         if (parsed < 2)
         {
@@ -979,8 +1033,14 @@ void loop()
             {
 
 #ifndef PRAWNBLASTER_OVERCLOCK
-                // Do validation checking on values provided
+#    if PRAWNBLASTER_PICO_BOARD == 1
                 if (freq > 133 * MHZ)
+#    elif PRAWNBLASTER_PICO_BOARD == 2
+                if (freq > 150 * MHZ)
+#    else
+#        error "Unsupported PICO_BOARD"
+#    endif // PICO_BOARD
+                // Do validation checking on values provided
                 {
                     fast_serial_printf("Invalid clock frequency specified\r\n");
                     return;
@@ -1018,6 +1078,7 @@ void loop()
         {
             fast_serial_printf("invalid request\r\n");
         }
+#if PRAWNBLASTER_PICO_BOARD == 1
         else if (core != 0 && core != 1)
         {
             fast_serial_printf("You must specify either 0 for PIO0 or 1 for PIO1\r\n");
@@ -1027,6 +1088,17 @@ void loop()
             pio_to_use = core == 0 ? pio0 : pio1;
             fast_serial_printf("ok\r\n");
         }
+#elif PRAWNBLASTER_PICO_BOARD == 2
+        else if (core != 0 && core != 1 && core != 2)
+        {
+            fast_serial_printf("You must specify either 0 for PIO0 or 1 for PIO1 or 2 for PIO2\r\n");
+        }
+        else
+        {
+            pio_to_use = core == 0 ? pio0 : (core == 1 ? pio1 : pio2);
+            fast_serial_printf("ok\r\n");
+        }
+#endif
     }
     else if (strncmp(readstring, "hwstart", 7) == 0)
     {
