@@ -71,6 +71,7 @@ Communication during buffered execution is allowed (it is handled by a separate 
 Note: the commands are only read if terminated with `\r\n`.
 
 * `version`: Responds with a string containing the firmware version.
+* `board`: Responds with a string containing the board version (`pico1` or `pico2`).
 * `status`: Responds with a string containing the PrawnBlaster status in the format `run-status:<int> clock-status:<int>` where the `run-status` integer is `0=manual-mode, 1=transitioning to buffered-execution, 2=buffered-execution, 3=abort requested, 4=currently aborting buffered execution, 5=last buffered-execution aborted, 6=transitioning to manual-mode`. `clock-status` is either 0 (for internal clock) or 1 (for external clock).
 * `getfreqs`: Responds with a multi-line string containing the current operating frequencies of various clocks (you will be most interested in `pll_sys` and `clk_sys`). Multiline string ends with `ok\n`.
 * `abort`: Prematurely ends buffered-execution.
