@@ -11,6 +11,5 @@ set(CMAKE_CXX_STANDARD 17)
 # Initialize the SDK
 pico_sdk_init()
 
-# Add blink example
+# Add project directory
 add_subdirectory(prawnblaster)
-
