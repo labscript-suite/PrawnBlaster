@@ -1391,7 +1391,7 @@ int main()
     set_sys_clock_khz(100 * MHZ / 1000, true);
 
     // Temp output 48MHZ clock for debug
-    clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_USB, 1);
+    //clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_USB, 1);
 
     fast_serial_init();
 
