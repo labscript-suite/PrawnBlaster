@@ -1002,9 +1002,9 @@ void loop()
                 }
                 else
                 {
-                    clock_configure_gpin(clk_sys, (src == 2 ? 22 : 20), freq, freq);
-                    // update clock status
+                    // update clock status first so resus can correct if config fails
                     clock_status = EXTERNAL;
+                    clock_configure_gpin(clk_sys, (src == 2 ? 22 : 20), freq, freq);
                     fast_serial_printf("ok\r\n");
                 }
             }
