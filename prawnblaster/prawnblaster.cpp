@@ -717,6 +717,9 @@ void resus_callback(void)
 
     // update clock status
     clock_status = INTERNAL;
+
+    // inform user on next read
+    fast_serial_printf("System Clock Resus'd\r\n");
 }
 
 void loop()
