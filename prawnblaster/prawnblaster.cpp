@@ -37,9 +37,9 @@ extern "C"{
 }
 
 #ifndef PRAWNBLASTER_OVERCLOCK
-const char VERSION[16] = "1.1.0";
+const char VERSION[16] = "1.1.1";
 #else
-const char VERSION[16] = "1.1.0-overclock";
+const char VERSION[16] = "1.1.1-overclock";
 #endif //PRAWNBLASTER_OVERCLOCK
 
 int DEBUG;
@@ -717,6 +717,9 @@ void resus_callback(void)
 
     // update clock status
     clock_status = INTERNAL;
+
+    // inform user on next read
+    fast_serial_printf("System Clock Resus'd\r\n");
 }
 
 void loop()
@@ -1002,9 +1005,9 @@ void loop()
                 }
                 else
                 {
-                    clock_configure_gpin(clk_sys, (src == 2 ? 22 : 20), freq, freq);
-                    // update clock status
+                    // update clock status first so resus can correct if config fails
                     clock_status = EXTERNAL;
+                    clock_configure_gpin(clk_sys, (src == 2 ? 22 : 20), freq, freq);
                     fast_serial_printf("ok\r\n");
                 }
             }
@@ -1388,7 +1391,7 @@ int main()
     set_sys_clock_khz(100 * MHZ / 1000, true);
 
     // Temp output 48MHZ clock for debug
-    clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_USB, 1);
+    //clock_gpio_init(21, CLOCKS_CLK_GPOUT0_CTRL_AUXSRC_VALUE_CLK_USB, 1);
 
     fast_serial_init();
 
