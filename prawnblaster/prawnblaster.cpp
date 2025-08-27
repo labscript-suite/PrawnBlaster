@@ -37,13 +37,13 @@ extern "C"{
 #include "fast_serial.h"
 }
 
-#ifndef PRAWNBLASTER_OVERCLOCK
 const char VERSION[16] = "1.2.0";
-#else
-const char VERSION[16] = "1.2.0-overclock";
-#endif //PRAWNBLASTER_OVERCLOCK
 
 int DEBUG;
+
+// Freq limits in MHz
+constexpr unsigned int normal_freq_limit = PRAWNBLASTER_NORMAL_FREQ_LIMIT;
+constexpr unsigned int overclock_freq_limit = PRAWNBLASTER_OVERCLOCK_FREQ_LIMIT;
 
 // Can't seem to have this be used to define array size even though it's a constant
 constexpr unsigned int max_instructions = PRAWNBLASTER_NUM_INSTRUCTIONS;
@@ -1038,13 +1038,17 @@ void loop()
         }
         else
         {
-            if (freq >= 150 * MHZ)
+            if (freq > overclock_freq_limit * MHZ)
             {
-                    vreg_set_voltage(VREG_VOLTAGE_1_30);
-                }
-                if (freq < 150 * MHZ)
-                {
-                    vreg_set_voltage(VREG_VOLTAGE_1_10);
+                fast_serial_printf("WARNING: Requested freq > normal bounds, setting voltage = 1.3 V\n");
+                vreg_set_voltage(VREG_VOLTAGE_1_30);
+            }
+            else if (freq > normal_freq_limit * MHZ && freq <= overclock_freq_limit * MHZ)
+            {
+                vreg_set_voltage(VREG_VOLTAGE_1_20);
+            }
+            else {
+                vreg_set_voltage(VREG_VOLTAGE_1_10);
             }
             if (DEBUG)
             {
@@ -1056,21 +1060,6 @@ void loop()
             }
             else
             {
-
-#ifndef PRAWNBLASTER_OVERCLOCK
-#    if PRAWNBLASTER_PICO_BOARD == 1
-                if (freq > 200 * MHZ)
-#    elif PRAWNBLASTER_PICO_BOARD == 2
-                if (freq > 150 * MHZ)
-#    else
-#        error "Unsupported PICO_BOARD"
-#    endif // PICO_BOARD
-                // Do validation checking on values provided
-                {
-                    fast_serial_printf("Invalid clock frequency specified\r\n");
-                    return;
-                }
-#endif //PRAWNBLASTER_OVERCLOCK
 
                 // Set new clock frequency
                 if (src == 0)
